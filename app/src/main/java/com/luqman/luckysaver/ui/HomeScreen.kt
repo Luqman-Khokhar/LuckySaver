@@ -44,6 +44,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -69,6 +70,7 @@ fun HomeScreen(
     input: String,
     state: ResolveState,
     loggedIn: Boolean,
+    bubbleOn: Boolean,
     queue: QueueStatus,
     message: String?,
     onInput: (String) -> Unit,
@@ -76,6 +78,7 @@ fun HomeScreen(
     onToggle: (String) -> Unit,
     onSelectAll: (Boolean) -> Unit,
     onDownload: () -> Unit,
+    onToggleBubble: (Boolean) -> Unit,
     onLogin: () -> Unit,
     onLogout: () -> Unit,
     onHistory: () -> Unit,
@@ -142,6 +145,8 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Fetch media") }
 
+                    BubbleRow(bubbleOn, onToggleBubble)
+
                     if (!loggedIn) Text(
                         "Not logged in: only public posts and reels work. Log in (use a secondary account) for stories, highlights and private accounts you follow.",
                         style = MaterialTheme.typography.bodySmall,
@@ -159,6 +164,26 @@ fun HomeScreen(
                 }
             }
         }
+    }
+}
+
+/** Toggle for the floating download button that works over other apps. */
+@Composable
+private fun BubbleRow(bubbleOn: Boolean, onToggle: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Floating button", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Copy a link in Instagram, then tap the bubble to download without leaving the app.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = bubbleOn, onCheckedChange = onToggle)
     }
 }
 

@@ -49,12 +49,21 @@ class MainActivity : ComponentActivity() {
                 val loggedIn by vm.loggedIn.collectAsStateWithLifecycle()
                 val queue by vm.queue.collectAsStateWithLifecycle()
                 val message by vm.message.collectAsStateWithLifecycle()
+                val bubbleOn by vm.bubbleOn.collectAsStateWithLifecycle()
                 val history by vm.history.collectAsStateWithLifecycle()
 
                 BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
                 when (screen) {
                     Screen.HOME -> HomeScreen(
                         input = input, state = state, loggedIn = loggedIn, queue = queue, message = message,
+                        bubbleOn = bubbleOn,
+                        onToggleBubble = { on ->
+                            // Drawing over other apps is a special permission: send the user to
+                            // the system screen when it has not been granted yet.
+                            if (!vm.toggleBubble(on)) {
+                                startActivity(com.luqman.luckysaver.overlay.BubbleService.overlaySettingsIntent(this))
+                            }
+                        },
                         onInput = vm::onInput, onResolve = vm::resolve, onToggle = vm::toggle,
                         onSelectAll = vm::selectAll, onDownload = vm::downloadSelected,
                         onLogin = { screen = Screen.LOGIN }, onLogout = vm::logout,

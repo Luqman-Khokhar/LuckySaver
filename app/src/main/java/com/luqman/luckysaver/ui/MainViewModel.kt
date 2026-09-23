@@ -10,6 +10,7 @@ import com.luqman.luckysaver.core.MediaItem
 import com.luqman.luckysaver.core.ResolveException
 import com.luqman.luckysaver.data.DownloadEntity
 import com.luqman.luckysaver.download.DownloadWorker
+import com.luqman.luckysaver.overlay.BubbleService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -41,6 +42,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _loggedIn = MutableStateFlow(app.session.isLoggedIn)
     val loggedIn: StateFlow<Boolean> = _loggedIn.asStateFlow()
 
+    private val _bubbleOn = MutableStateFlow(BubbleService.isEnabled(application))
+    val bubbleOn: StateFlow<Boolean> = _bubbleOn.asStateFlow()
+
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
@@ -60,7 +64,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onInput(text: String) { _input.value = text }
 
-    fun refreshLogin() { _loggedIn.value = app.session.isLoggedIn }
+    fun refreshLogin() {
+        _loggedIn.value = app.session.isLoggedIn
+        _bubbleOn.value = BubbleService.isEnabled(getApplication())
+    }
+
+    /** Returns false when the overlay permission still has to be granted. */
+    fun toggleBubble(on: Boolean): Boolean {
+        val context = getApplication<Application>()
+        if (on && !BubbleService.canDrawOverlay(context)) return false
+        if (on) BubbleService.start(context) else BubbleService.stop(context)
+        _bubbleOn.value = on
+        return true
+    }
 
     fun logout() {
         app.session.logout()

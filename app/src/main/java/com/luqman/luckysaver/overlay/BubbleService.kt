@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
@@ -26,6 +27,7 @@ import com.luqman.luckysaver.MainActivity
 import com.luqman.luckysaver.R
 import com.luqman.luckysaver.core.IgLinkParser
 import com.luqman.luckysaver.core.ResolveException
+import com.luqman.luckysaver.download.DownloadNotifications
 import com.luqman.luckysaver.download.DownloadWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -100,6 +102,8 @@ class BubbleService : Service() {
             layoutParams = android.view.ViewGroup.LayoutParams(size, size)
             contentDescription = getString(R.string.bubble_description)
             alpha = 0.9f
+            background = stateBackground(COLOR_IDLE)
+            elevation = 8 * resources.displayMetrics.density
         }
         view.setOnTouchListener(dragListener(layout))
         runCatching { windowManager.addView(view, layout) }
@@ -124,7 +128,8 @@ class BubbleService : Service() {
                     touchX = event.rawX
                     touchY = event.rawY
                     downAt = System.currentTimeMillis()
-                    v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(80).start()
+                    v.animate().cancel()
+                    v.animate().scaleX(0.85f).scaleY(0.85f).alpha(1f).setDuration(80).start()
                 }
                 MotionEvent.ACTION_MOVE -> {
                     layout.x = startX + (event.rawX - touchX).toInt()
@@ -155,32 +160,91 @@ class BubbleService : Service() {
             try {
                 val link = readClipboard()
                 if (link.isNullOrBlank()) {
-                    toast("Copy an Instagram link first")
+                    fail("Copy an Instagram link first", notify = false)
                     return@launch
                 }
                 if (IgLinkParser.parse(link) == null) {
-                    toast("Clipboard has no Instagram link")
+                    fail("Clipboard has no Instagram link", notify = false)
                     return@launch
                 }
-                toast("Fetching…")
+                showWorking()
                 val app = applicationContext as App
                 val items = app.resolver.resolve(link)
                 val saved = app.db.downloads().existingKeys(items.map { it.key }).toSet()
                 val fresh = items.filter { it.key !in saved }
                 if (fresh.isEmpty()) {
-                    toast("Already saved")
+                    succeed("Already saved")
                     return@launch
                 }
-                fresh.forEach { DownloadWorker.enqueue(applicationContext, it) }
-                toast("Downloading ${fresh.size} file${if (fresh.size == 1) "" else "s"}")
+                DownloadWorker.enqueueAll(applicationContext, fresh)
+                succeed("Downloading ${fresh.size} file${if (fresh.size == 1) "" else "s"}")
             } catch (e: ResolveException) {
-                toast(e.message ?: "Couldn't fetch that post")
+                fail(e.message ?: "Couldn't fetch that post")
             } catch (e: Exception) {
-                toast(e.message ?: "Something went wrong")
+                fail(e.message ?: "Something went wrong")
             } finally {
                 busy = false
             }
         }
+    }
+
+    /** Slow pulse while resolving, so a tap never looks like it did nothing. */
+    private fun showWorking() {
+        val view = bubble ?: return
+        view.background = stateBackground(COLOR_WORKING)
+        view.animate().cancel()
+        view.animate().alpha(0.45f).setDuration(450)
+            .withEndAction {
+                if (busy) view.animate().alpha(1f).setDuration(450).withEndAction { if (busy) showWorking() }.start()
+            }
+            .start()
+    }
+
+    private fun succeed(message: String) {
+        val view = bubble ?: return
+        busy = false
+        view.animate().cancel()
+        view.alpha = 1f
+        view.background = stateBackground(COLOR_SUCCESS)
+        view.animate().scaleX(1.25f).scaleY(1.25f).setDuration(120)
+            .withEndAction { view.animate().scaleX(1f).scaleY(1f).setDuration(160).start() }
+            .start()
+        toast(message)
+        resetLater()
+    }
+
+    private fun fail(message: String, notify: Boolean = true) {
+        val view = bubble ?: return
+        busy = false
+        view.animate().cancel()
+        view.alpha = 1f
+        view.background = stateBackground(COLOR_ERROR)
+        // Short shake: an error should read differently from a success at a glance.
+        view.animate().translationX(-14f).setDuration(60)
+            .withEndAction {
+                view.animate().translationX(14f).setDuration(60)
+                    .withEndAction { view.animate().translationX(0f).setDuration(60).start() }
+                    .start()
+            }
+            .start()
+        toast(message)
+        if (notify) DownloadNotifications.resolveFailed(this, message)
+        resetLater()
+    }
+
+    private fun resetLater() {
+        scope.launch {
+            delay(RESET_DELAY_MS)
+            if (!busy) {
+                bubble?.background = stateBackground(COLOR_IDLE)
+                bubble?.alpha = 0.9f
+            }
+        }
+    }
+
+    private fun stateBackground(color: Int) = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(color)
     }
 
     /**
@@ -251,6 +315,12 @@ class BubbleService : Service() {
         private const val TAP_SLOP = 16f
         private const val LONG_PRESS_MS = 600
         private const val FOCUS_SETTLE_MS = 120L
+        private const val RESET_DELAY_MS = 2_000L
+
+        private const val COLOR_IDLE = 0x00000000
+        private const val COLOR_WORKING = 0xFF3B5BFE.toInt()
+        private const val COLOR_SUCCESS = 0xFF1DB954.toInt()
+        private const val COLOR_ERROR = 0xFFE23B3B.toInt()
 
         private const val UNFOCUSED_FLAGS = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS

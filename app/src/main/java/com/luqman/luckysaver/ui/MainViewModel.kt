@@ -120,7 +120,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun downloadSelected() {
         val s = _state.value as? ResolveState.Ready ?: return
         val picked = s.items.filter { it.key in s.selected }
-        picked.forEach { DownloadWorker.enqueue(getApplication(), it) }
+        DownloadWorker.enqueueAll(getApplication(), picked)
         _message.value = "Queued ${picked.size} file${if (picked.size == 1) "" else "s"}"
         _state.value = s.copy(selected = emptySet(), alreadySaved = s.alreadySaved + picked.map { it.key })
     }

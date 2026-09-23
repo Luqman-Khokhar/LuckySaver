@@ -78,7 +78,10 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                                         setProgress(workDataOf(K_PROGRESS to pct))
                                         // Keep the ongoing notification in step with the download so
                                         // progress stays visible while the app is in the background.
-                                        notify(notificationId, progressNotification(fileName, pct, total))
+                                        notify(
+                                            notificationId,
+                                            DownloadNotifications.progress(applicationContext, fileName, pct, total),
+                                        )
                                     }
                                 }
                             }
@@ -86,7 +89,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                     }
                 }
                 saver.publish(uri)
-                notify(resultNotificationId, doneNotification(fileName, uri, isVideo))
+                DownloadNotifications.saved(applicationContext, resultNotificationId, fileName, uri, isVideo)
                 app.db.downloads().upsert(
                     DownloadEntity(
                         key = key,
@@ -101,26 +104,32 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                 Result.success()
             } catch (e: ExpiredUrl) {
                 saver.discard(uri)
-                notify(resultNotificationId, failedNotification(fileName, "Link expired. Fetch the post again."))
+                DownloadNotifications.failed(
+                    applicationContext, resultNotificationId, fileName, "Link expired. Fetch the post again.",
+                )
                 Result.failure(workDataOf(K_ERROR to "Link expired. Resolve the post again."))
             } catch (e: IOException) {
                 saver.discard(uri)
                 if (runAttemptCount < 3) {
                     Result.retry()
                 } else {
-                    notify(resultNotificationId, failedNotification(fileName, e.message ?: "Network error"))
+                    DownloadNotifications.failed(
+                        applicationContext, resultNotificationId, fileName, e.message ?: "Network error",
+                    )
                     Result.failure(workDataOf(K_ERROR to (e.message ?: "Network error")))
                 }
             } catch (e: Throwable) {
                 saver.discard(uri)
-                cancelNotification(notificationId)
+                DownloadNotifications.cancel(applicationContext, notificationId)
                 throw e
             }
         }
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo {
-        val notification = progressNotification(inputData.getString(K_FILE).orEmpty(), -1, 0)
+        val notification = DownloadNotifications.progress(
+            applicationContext, inputData.getString(K_FILE).orEmpty(), -1, 0,
+        )
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
             ForegroundInfo(notificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         else ForegroundInfo(notificationId, notification)
@@ -134,57 +143,13 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
      */
     private val resultNotificationId get() = notificationId + 1
 
-    private val notificationManager
-        get() = applicationContext.getSystemService(NotificationManager::class.java)
-
-    private fun builder(): NotificationCompat.Builder {
-        notificationManager.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Downloads", NotificationManager.IMPORTANCE_LOW)
-        )
-        return NotificationCompat.Builder(applicationContext, CHANNEL)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
-    }
-
-    /** [pct] < 0 renders an indeterminate bar (size not known yet). */
-    private fun progressNotification(fileName: String, pct: Int, totalBytes: Long) = builder()
-        .setContentTitle(if (pct < 0) "Downloading" else "Downloading  $pct%")
-        .setContentText(if (totalBytes > 0) "$fileName · ${totalBytes / 1024 / 1024} MB" else fileName)
-        .setOngoing(true)
-        .setOnlyAlertOnce(true)
-        .setProgress(100, pct.coerceAtLeast(0), pct < 0)
-        .build()
-
-    private fun doneNotification(fileName: String, uri: Uri, isVideo: Boolean) = builder()
-        .setSmallIcon(android.R.drawable.stat_sys_download_done)
-        .setContentTitle("Saved to LuckySaver")
-        .setContentText(fileName)
-        .setAutoCancel(true)
-        .setContentIntent(
-            PendingIntent.getActivity(
-                applicationContext,
-                notificationId,
-                Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(uri, if (isVideo) "video/*" else "image/*")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK),
-                PendingIntent.FLAG_IMMUTABLE,
-            )
-        )
-        .build()
-
-    private fun failedNotification(fileName: String, reason: String) = builder()
-        .setSmallIcon(android.R.drawable.stat_notify_error)
-        .setContentTitle("Download failed")
-        .setContentText("$fileName · $reason")
-        .setAutoCancel(true)
-        .build()
-
     private fun notify(id: Int, notification: android.app.Notification) {
-        runCatching { notificationManager.notify(id, notification) }
+        runCatching {
+            applicationContext.getSystemService(NotificationManager::class.java).notify(id, notification)
+        }
     }
 
-    private fun cancelNotification(id: Int) {
-        runCatching { notificationManager.cancel(id) }
-    }
+
 
     private class ExpiredUrl : IOException()
 
@@ -200,6 +165,13 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         const val K_PROGRESS = "progress"
         const val K_ERROR = "error"
         private const val CHANNEL = "downloads"
+
+        /** Queues a batch and raises a single "started" popup for it. */
+        fun enqueueAll(context: Context, items: List<MediaItem>) {
+            if (items.isEmpty()) return
+            items.forEach { enqueue(context, it) }
+            DownloadNotifications.started(context, items.size)
+        }
 
         fun enqueue(context: Context, item: MediaItem) {
             val request = OneTimeWorkRequestBuilder<DownloadWorker>()

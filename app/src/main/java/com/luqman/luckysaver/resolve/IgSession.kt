@@ -47,9 +47,12 @@ class IgSession(context: Context) {
         prefs.edit().putBoolean(KEY_EXPIRED, false).apply()
     }
 
-    fun headers(): Map<String, String> = buildMap {
-        put("User-Agent", userAgent)
-        put("X-IG-App-ID", IG_WEB_APP_ID)
+    fun headers(
+        appId: String = IG_WEB_APP_ID,
+        agent: String = userAgent,
+    ): Map<String, String> = buildMap {
+        put("User-Agent", agent)
+        put("X-IG-App-ID", appId)
         put("X-Requested-With", "XMLHttpRequest")
         put("X-ASBD-ID", "129477")
         put("Referer", "$IG_ORIGIN/")

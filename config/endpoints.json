@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "appId": "936619743392459",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+  "mediaInfo": "/api/v1/media/{id}/info/",
+  "userInfo": "/api/v1/users/web_profile_info/?username={username}",
+  "reels": "/api/v1/feed/reels_media/?reel_ids={ids}",
+  "embed": "/p/{code}/embed/captioned/",
+  "minRequestIntervalMs": 2000
+}

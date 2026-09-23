@@ -4,6 +4,7 @@ import com.luqman.luckysaver.core.IgJson
 import com.luqman.luckysaver.core.IgLink
 import com.luqman.luckysaver.core.IgLinkParser
 import com.luqman.luckysaver.core.MediaItem
+import com.luqman.luckysaver.core.FailureKind
 import com.luqman.luckysaver.core.ResolveException
 import com.luqman.luckysaver.core.Shortcode
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +18,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 
+/** Instagram rarely sends Retry-After; five minutes is the usual soft-block window. */
+private const val DEFAULT_COOLDOWN_MS = 5 * 60 * 1000L
+
 interface MediaResolver {
     val name: String
     fun supports(link: IgLink): Boolean
@@ -27,6 +31,7 @@ interface MediaResolver {
 class ApiResolver(
     private val http: OkHttpClient,
     private val session: IgSession,
+    private val endpoints: () -> IgEndpoints = { IgEndpoints() },
     private val preferSmaller: () -> Boolean = { false },
 ) : MediaResolver {
     override val name = "api"
@@ -34,26 +39,32 @@ class ApiResolver(
 
     override suspend fun resolve(link: IgLink): List<MediaItem> = when (link) {
         is IgLink.Post -> {
-            val root = getJson("/api/v1/media/${Shortcode.toMediaId(link.shortcode)}/info/")
-            val items = root.optJSONArray("items") ?: throw ResolveException("No items in response")
+            val root = getJson(endpoints().mediaInfoPath(Shortcode.toMediaId(link.shortcode)))
+            val items = root.optJSONArray("items")
+                ?: throw ResolveException("Instagram returned nothing for that post", FailureKind.UNREADABLE)
             (0 until items.length()).flatMap { IgJson.parseMedia(items.getJSONObject(it), preferSmaller()) }
         }
         is IgLink.Story -> {
             val userId = userInfo(link.username).getString("id")
-            val nodes = IgJson.parseReels(getJson("/api/v1/feed/reels_media/?reel_ids=$userId"))
-            if (nodes.isEmpty()) throw ResolveException("@${link.username} has no active stories")
+            val nodes = IgJson.parseReels(getJson(endpoints().reelsPath(userId)))
+            if (nodes.isEmpty()) throw ResolveException(
+                "@${link.username} has no stories right now, or you can't see them",
+                FailureKind.PRIVATE_ACCOUNT,
+            )
             val picked = link.storyPk?.let { pk -> nodes.filter { it.optString("pk") == pk }.ifEmpty { nodes } } ?: nodes
             picked.flatMap { IgJson.parseMedia(it, preferSmaller()) }
         }
         is IgLink.Highlight -> {
-            val nodes = IgJson.parseReels(getJson("/api/v1/feed/reels_media/?reel_ids=highlight:${link.highlightId}"))
-            if (nodes.isEmpty()) throw ResolveException("Highlight is empty or unavailable")
+            val nodes = IgJson.parseReels(getJson(endpoints().reelsPath("highlight:${link.highlightId}")))
+            if (nodes.isEmpty()) throw ResolveException(
+                "That highlight is empty or not visible to you", FailureKind.PRIVATE_ACCOUNT,
+            )
             nodes.flatMap { IgJson.parseMedia(it, preferSmaller()) }
         }
         is IgLink.Profile -> {
             val user = userInfo(link.username)
             val url = user.optString("profile_pic_url_hd").ifEmpty { user.optString("profile_pic_url") }
-            if (url.isEmpty()) throw ResolveException("No profile picture found")
+            if (url.isEmpty()) throw ResolveException("That account has no profile picture", FailureKind.NOT_FOUND)
             listOf(
                 MediaItem(
                     key = "${user.optString("id")}_pfp", kind = com.luqman.luckysaver.core.MediaKind.IMAGE,
@@ -66,46 +77,74 @@ class ApiResolver(
     }
 
     private suspend fun userInfo(username: String): JSONObject =
-        getJson("/api/v1/users/web_profile_info/?username=$username")
+        getJson(endpoints().userInfoPath(username))
             .optJSONObject("data")?.optJSONObject("user")
-            ?: throw ResolveException("User @$username not found")
+            ?: throw ResolveException("There is no account called @$username", FailureKind.NOT_FOUND)
 
     private suspend fun getJson(path: String): JSONObject = withContext(Dispatchers.IO) {
         val req = Request.Builder().url(IgSession.IG_ORIGIN + path).apply {
-            session.headers().forEach { (k, v) -> header(k, v) }
+            session.headers(endpoints().appId, endpoints().userAgent).forEach { (k, v) -> header(k, v) }
         }.build()
         http.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
             val loginWall = resp.code == 401 || resp.code == 403 ||
                 body.contains("login_required") || body.contains("checkpoint_required")
-            if (loginWall) throw ResolveException("Instagram wants you to log in again", needsLogin = true)
-            if (resp.code == 429) throw ResolveException("Rate limited by Instagram. Wait a few minutes.")
-            if (resp.code == 404) throw ResolveException("Not found. Post deleted or account private.")
-            if (!resp.isSuccessful) throw ResolveException("Instagram returned HTTP ${resp.code}")
-            if (!body.trimStart().startsWith("{")) throw ResolveException("Unexpected response (not JSON)", needsLogin = true)
+            when {
+                loginWall -> throw ResolveException(
+                    "Instagram signed this device out", FailureKind.SESSION_EXPIRED,
+                )
+                resp.code == 429 -> {
+                    val wait = resp.header("Retry-After")?.toLongOrNull()?.times(1000) ?: DEFAULT_COOLDOWN_MS
+                    throw ResolveException(
+                        "Instagram is rate limiting us. Waiting ${wait / 60_000} min before trying again.",
+                        FailureKind.RATE_LIMITED, retryAfterMs = wait,
+                    )
+                }
+                resp.code == 404 -> throw ResolveException(
+                    "That post no longer exists, or the account is private to you",
+                    FailureKind.NOT_FOUND,
+                )
+                !resp.isSuccessful -> throw ResolveException(
+                    "Instagram returned HTTP ${resp.code}", FailureKind.UNKNOWN,
+                )
+                !body.trimStart().startsWith("{") -> throw ResolveException(
+                    "Instagram sent a page instead of data, which usually means the session is stale",
+                    FailureKind.SESSION_EXPIRED,
+                )
+            }
             JSONObject(body)
         }
     }
 }
 
 /** Anonymous fallback: scrapes the public embed page. Public posts/reels only. */
-class EmbedResolver(private val http: OkHttpClient, private val session: IgSession) : MediaResolver {
+class EmbedResolver(
+    private val http: OkHttpClient,
+    private val session: IgSession,
+    private val endpointsFor: () -> IgEndpoints = { IgEndpoints() },
+) : MediaResolver {
     override val name = "embed"
     override fun supports(link: IgLink) = link is IgLink.Post
 
     override suspend fun resolve(link: IgLink): List<MediaItem> = withContext(Dispatchers.IO) {
         val code = (link as IgLink.Post).shortcode
         val req = Request.Builder()
-            .url("${IgSession.IG_ORIGIN}/p/$code/embed/captioned/")
+            .url(IgSession.IG_ORIGIN + endpointsFor().embedPath(code))
             .header("User-Agent", session.userAgent)
             .build()
         val html = http.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) throw ResolveException("Embed page HTTP ${resp.code}")
+            if (!resp.isSuccessful) throw ResolveException(
+                "Embed page returned HTTP ${resp.code}", FailureKind.UNREADABLE,
+            )
             resp.body?.string().orEmpty()
         }
         fromContextJson(html, code)?.takeIf { it.isNotEmpty() }
             ?: fromImgTag(html, code)
-            ?: throw ResolveException("Post is private or embed disabled. Log in to download.", needsLogin = !session.isLoggedIn)
+            ?: throw ResolveException(
+                if (session.isLoggedIn) "That post can't be read without a session that can see it"
+                else "Log in to download — Instagram no longer serves posts to signed-out apps",
+                if (session.isLoggedIn) FailureKind.PRIVATE_ACCOUNT else FailureKind.SESSION_EXPIRED,
+            )
     }
 
     private fun fromContextJson(html: String, code: String): List<MediaItem>? {
@@ -152,14 +191,27 @@ class ResolverChain(
 ) {
     private val mutex = Mutex()
     private var lastCall = 0L
+    private var cooldownUntil = 0L
 
     suspend fun resolve(input: String): List<MediaItem> = mutex.withLock {
-        var link = IgLinkParser.parse(input) ?: throw ResolveException("Not an Instagram post, reel, story or profile link")
+        cooldownUntil.takeIf { it > System.currentTimeMillis() }?.let { until ->
+            val left = (until - System.currentTimeMillis()) / 1000
+            throw ResolveException(
+                "Instagram asked us to slow down. Try again in ${left / 60}m ${left % 60}s.",
+                FailureKind.RATE_LIMITED, retryAfterMs = until - System.currentTimeMillis(),
+            )
+        }
+        var link = IgLinkParser.parse(input)
+            ?: throw ResolveException(
+                "That isn't an Instagram post, reel, story or profile link", FailureKind.UNSUPPORTED_LINK,
+            )
         if (link is IgLink.Share) link = followShare(link.url)
 
         val candidates = resolvers.filter { it.supports(link) }
         if (candidates.isEmpty()) {
-            throw ResolveException("Log in to download stories, highlights and profiles", needsLogin = true)
+            throw ResolveException(
+                "Log in to download stories, highlights and profiles", FailureKind.SESSION_EXPIRED,
+            )
         }
         var lastError: ResolveException? = null
         for (r in candidates) {
@@ -171,10 +223,21 @@ class ResolverChain(
                 if (items.isNotEmpty()) return@withLock items
             } catch (e: ResolveException) {
                 lastError = e
+                // Backing off is the whole point of a 429; trying the next resolver makes it worse.
+                if (e.kind == FailureKind.RATE_LIMITED) {
+                    cooldownUntil = System.currentTimeMillis() + e.retryAfterMs
+                    break
+                }
+                if (e.kind == FailureKind.SESSION_EXPIRED) break
             } catch (e: IOException) {
-                lastError = ResolveException("Network error: ${e.message}", cause = e)
+                lastError = ResolveException(
+                    "No connection to Instagram. Check your network.", FailureKind.NETWORK, cause = e,
+                )
             } catch (e: Exception) {
-                lastError = ResolveException("Couldn't parse Instagram response (${r.name}): ${e.message}", cause = e)
+                lastError = ResolveException(
+                    "Instagram's response didn't look the way this app expects (${r.name})",
+                    FailureKind.UNREADABLE, cause = e,
+                )
             }
         }
         lastError?.takeIf { it.needsLogin }?.let { onSessionExpired() }
@@ -185,6 +248,6 @@ class ResolverChain(
         val req = Request.Builder().url(url).head().build()
         val finalUrl = http.newCall(req).execute().use { it.request.url.toString() }
         IgLinkParser.parse(finalUrl)?.takeIf { it !is IgLink.Share }
-            ?: throw ResolveException("Couldn't expand share link")
+            ?: throw ResolveException("Couldn't expand that share link", FailureKind.UNSUPPORTED_LINK)
     }
 }

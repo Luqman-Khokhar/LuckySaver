@@ -39,5 +39,24 @@ data class MediaItem(
     }
 }
 
-class ResolveException(message: String, val needsLogin: Boolean = false, cause: Throwable? = null) :
-    Exception(message, cause)
+/** What went wrong, so callers can react instead of pattern-matching on message text. */
+enum class FailureKind {
+    SESSION_EXPIRED,
+    PRIVATE_ACCOUNT,
+    NOT_FOUND,
+    RATE_LIMITED,
+    NETWORK,
+    UNREADABLE,
+    UNSUPPORTED_LINK,
+    UNKNOWN,
+}
+
+class ResolveException(
+    message: String,
+    val kind: FailureKind = FailureKind.UNKNOWN,
+    /** Set when Instagram asked us to wait; the message already says how long. */
+    val retryAfterMs: Long = 0,
+    cause: Throwable? = null,
+) : Exception(message, cause) {
+    val needsLogin: Boolean get() = kind == FailureKind.SESSION_EXPIRED
+}

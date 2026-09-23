@@ -19,7 +19,22 @@ data class Settings(
     val fileNameTemplate: String = "{user}_{code}_{index}",
     val autoDownload: Boolean = true,
     val skipDuplicates: Boolean = true,
+    val storyWatchEnabled: Boolean = false,
+    val storyIntervalHours: Int = 4,
 )
+
+/** Checks per day at each interval, used to explain the risk in the picker. */
+enum class WatchInterval(val hours: Int, val label: String, val risk: String) {
+    TWO(2, "Every 2 hours", "12 checks a day. Highest chance Instagram flags the account as automated."),
+    FOUR(4, "Every 4 hours", "6 checks a day. Balanced: catches most stories, ordinary-looking traffic."),
+    EIGHT(8, "Every 8 hours", "3 checks a day. Safer, but a story posted and deleted quickly can be missed."),
+    TWELVE(12, "Every 12 hours", "2 checks a day. Lowest risk, misses the most."),
+    ;
+
+    companion object {
+        fun of(hours: Int) = entries.firstOrNull { it.hours == hours } ?: FOUR
+    }
+}
 
 /** Small enough that SharedPreferences beats pulling in DataStore. */
 class SettingsStore(context: Context) {
@@ -39,6 +54,8 @@ class SettingsStore(context: Context) {
             ?: "{user}_{code}_{index}",
         autoDownload = prefs.getBoolean(KEY_AUTO, true),
         skipDuplicates = prefs.getBoolean(KEY_SKIP_DUPES, true),
+        storyWatchEnabled = prefs.getBoolean(KEY_WATCH, false),
+        storyIntervalHours = prefs.getInt(KEY_WATCH_HOURS, 4),
     )
 
     fun update(block: (Settings) -> Settings) {
@@ -50,6 +67,8 @@ class SettingsStore(context: Context) {
             .putString(KEY_TEMPLATE, next.fileNameTemplate)
             .putBoolean(KEY_AUTO, next.autoDownload)
             .putBoolean(KEY_SKIP_DUPES, next.skipDuplicates)
+            .putBoolean(KEY_WATCH, next.storyWatchEnabled)
+            .putInt(KEY_WATCH_HOURS, next.storyIntervalHours)
             .apply()
         _state.value = read()
     }
@@ -61,6 +80,8 @@ class SettingsStore(context: Context) {
         private const val KEY_TEMPLATE = "template"
         private const val KEY_AUTO = "auto_download"
         private const val KEY_SKIP_DUPES = "skip_duplicates"
+        private const val KEY_WATCH = "story_watch"
+        private const val KEY_WATCH_HOURS = "story_watch_hours"
 
         /** MediaStore rejects path separators and leading dots in a relative path segment. */
         fun sanitizeFolder(raw: String): String =

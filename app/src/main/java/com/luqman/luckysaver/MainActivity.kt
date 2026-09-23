@@ -27,9 +27,10 @@ import com.luqman.luckysaver.ui.HomeScreen
 import com.luqman.luckysaver.ui.LoginScreen
 import com.luqman.luckysaver.ui.MainViewModel
 import com.luqman.luckysaver.ui.SettingsScreen
+import com.luqman.luckysaver.ui.WatchlistScreen
 import com.luqman.luckysaver.ui.WelcomeScreen
 
-private enum class Screen { WELCOME, HOME, LOGIN, HISTORY, SETTINGS }
+private enum class Screen { WELCOME, HOME, LOGIN, HISTORY, SETTINGS, WATCHLIST }
 
 class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
@@ -112,7 +113,29 @@ class MainActivity : ComponentActivity() {
                         settings = settings,
                         onChange = vm::updateSettings,
                         onBack = { screen = Screen.HOME },
+                        onOpenWatchlist = { screen = Screen.WATCHLIST },
                     )
+                    Screen.WATCHLIST -> {
+                        val accounts by vm.watched.collectAsStateWithLifecycle()
+                        val adding by vm.addingAccount.collectAsStateWithLifecycle()
+                        val watchError by vm.watchError.collectAsStateWithLifecycle()
+                        WatchlistScreen(
+                            accounts = accounts,
+                            enabled = settings.storyWatchEnabled,
+                            intervalHours = settings.storyIntervalHours,
+                            adding = adding,
+                            error = watchError,
+                            batteryUnrestricted = isIgnoringBatteryOptimizations(),
+                            onBack = { screen = Screen.SETTINGS },
+                            onAdd = vm::addWatchedAccount,
+                            onRemove = vm::removeWatchedAccount,
+                            onToggleAccount = vm::setAccountEnabled,
+                            onToggleWatching = vm::setStoryWatching,
+                            onIntervalChange = vm::setStoryInterval,
+                            onCheckNow = vm::checkStoriesNow,
+                            onFixBattery = ::requestBatteryExemption,
+                        )
+                    }
                 }
             }
         }
@@ -138,6 +161,18 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleShare(intent)
+    }
+
+    private fun isIgnoringBatteryOptimizations(): Boolean =
+        getSystemService(android.os.PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+
+    /** Scheduled checks are frozen by aggressive battery management on many phones. */
+    private fun requestBatteryExemption() {
+        runCatching {
+            startActivity(
+                Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            )
+        }
     }
 
     private fun handleShare(intent: Intent?) {

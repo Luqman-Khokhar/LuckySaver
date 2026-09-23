@@ -195,11 +195,18 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         private fun refreshedUrls(context: Context) =
             context.getSharedPreferences("refreshed_urls", Context.MODE_PRIVATE)
 
-        /** Queues a batch, raises one "started" popup, and returns the work ids to watch. */
-        fun enqueueAll(context: Context, items: List<MediaItem>): List<java.util.UUID> {
+        /**
+         * Queues a batch and returns the work ids to watch. [silent] suppresses the start popup
+         * for downloads the user did not just ask for, such as the story watchlist.
+         */
+        fun enqueueAll(
+            context: Context,
+            items: List<MediaItem>,
+            silent: Boolean = false,
+        ): List<java.util.UUID> {
             if (items.isEmpty()) return emptyList()
             val ids = items.map { enqueue(context, it) }
-            DownloadNotifications.started(context, items.size)
+            if (!silent) DownloadNotifications.started(context, items.size)
             return ids
         }
 

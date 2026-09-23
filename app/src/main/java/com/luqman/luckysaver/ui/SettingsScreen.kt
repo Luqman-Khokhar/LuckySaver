@@ -10,7 +10,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -37,6 +39,7 @@ fun SettingsScreen(
     settings: Settings,
     onChange: ((Settings) -> Settings) -> Unit,
     onBack: () -> Unit,
+    onOpenWatchlist: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -99,6 +102,32 @@ fun SettingsScreen(
                     "Smaller files pick a lower resolution where Instagram offers one.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            HorizontalDivider()
+
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenWatchlist)
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Story watchlist", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        if (settings.storyWatchEnabled)
+                            "On · checking every ${settings.storyIntervalHours}h"
+                        else "Off · save stories from chosen accounts before they expire",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 

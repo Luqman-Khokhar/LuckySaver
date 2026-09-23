@@ -76,6 +76,23 @@ class ApiResolver(
         is IgLink.Share -> emptyList()
     }
 
+    /**
+     * Stories for several accounts in one call. The endpoint accepts a comma-separated reel_ids,
+     * so watching ten accounts costs one request rather than ten — which matters a great deal
+     * when this runs on a timer.
+     */
+    suspend fun storiesFor(userIds: List<String>): List<MediaItem> {
+        if (userIds.isEmpty()) return emptyList()
+        val root = getJson(endpoints().reelsPath(userIds.joinToString(",")))
+        return IgJson.parseReels(root).flatMap { IgJson.parseMedia(it, preferSmaller()) }
+    }
+
+    /** Resolves a username to the numeric id, which is what the watchlist stores. */
+    suspend fun lookupUser(username: String): Pair<String, String> {
+        val user = userInfo(username.removePrefix("@").trim())
+        return user.getString("id") to user.optString("username").ifEmpty { username }
+    }
+
     private suspend fun userInfo(username: String): JSONObject =
         getJson(endpoints().userInfoPath(username))
             .optJSONObject("data")?.optJSONObject("user")
@@ -193,14 +210,51 @@ class ResolverChain(
     private var lastCall = 0L
     private var cooldownUntil = 0L
 
-    suspend fun resolve(input: String): List<MediaItem> = mutex.withLock {
-        cooldownUntil.takeIf { it > System.currentTimeMillis() }?.let { until ->
+    private val api: ApiResolver? get() = resolvers.filterIsInstance<ApiResolver>().firstOrNull()
+
+    val isRateLimited: Boolean get() = cooldownUntil > System.currentTimeMillis()
+
+    /** Watchlist check: same throttle and cooldown as everything else on this chain. */
+    suspend fun storiesFor(userIds: List<String>): List<MediaItem> = mutex.withLock {
+        val resolver = api?.takeIf { it.supports(IgLink.Story("", null)) }
+            ?: throw ResolveException("Log in to check stories", FailureKind.SESSION_EXPIRED)
+        guardCooldown()
+        throttle()
+        try {
+            resolver.storiesFor(userIds)
+        } catch (e: ResolveException) {
+            if (e.kind == FailureKind.RATE_LIMITED) cooldownUntil = System.currentTimeMillis() + e.retryAfterMs
+            if (e.kind == FailureKind.SESSION_EXPIRED) onSessionExpired()
+            throw e
+        }
+    }
+
+    suspend fun lookupUser(username: String): Pair<String, String> = mutex.withLock {
+        val resolver = api ?: throw ResolveException("Log in first", FailureKind.SESSION_EXPIRED)
+        guardCooldown()
+        throttle()
+        resolver.lookupUser(username)
+    }
+
+    private fun guardCooldown() {
+        val until = cooldownUntil
+        if (until > System.currentTimeMillis()) {
             val left = (until - System.currentTimeMillis()) / 1000
             throw ResolveException(
                 "Instagram asked us to slow down. Try again in ${left / 60}m ${left % 60}s.",
                 FailureKind.RATE_LIMITED, retryAfterMs = until - System.currentTimeMillis(),
             )
         }
+    }
+
+    private suspend fun throttle() {
+        val wait = lastCall + minIntervalMs - System.currentTimeMillis()
+        if (wait > 0) delay(wait)
+        lastCall = System.currentTimeMillis()
+    }
+
+    suspend fun resolve(input: String): List<MediaItem> = mutex.withLock {
+        guardCooldown()
         var link = IgLinkParser.parse(input)
             ?: throw ResolveException(
                 "That isn't an Instagram post, reel, story or profile link", FailureKind.UNSUPPORTED_LINK,
@@ -215,9 +269,7 @@ class ResolverChain(
         }
         var lastError: ResolveException? = null
         for (r in candidates) {
-            val wait = lastCall + minIntervalMs - System.currentTimeMillis()
-            if (wait > 0) delay(wait)
-            lastCall = System.currentTimeMillis()
+            throttle()
             try {
                 val items = r.resolve(link)
                 if (items.isNotEmpty()) return@withLock items

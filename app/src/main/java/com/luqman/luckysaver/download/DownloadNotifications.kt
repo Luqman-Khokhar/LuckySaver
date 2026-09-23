@@ -22,6 +22,7 @@ object DownloadNotifications {
     private const val CHANNEL_STATUS = "download_status"
     private const val ID_STARTED = 1_000
     private const val ID_SESSION = 1_001
+    private const val ID_STORIES = 1_002
 
     const val EXTRA_OPEN_LOGIN = "open_login"
 
@@ -156,6 +157,21 @@ object DownloadNotifications {
     }
 
     fun clearSessionExpired(context: Context) = cancel(context, ID_SESSION)
+
+    /** One quiet summary for a watchlist run, rather than a popup per story. */
+    fun storiesSaved(context: Context, count: Int, accounts: Int) {
+        val files = if (count == 1) "1 story" else "$count stories"
+        val from = if (accounts == 1) "1 account" else "$accounts accounts"
+        notify(
+            context, ID_STORIES,
+            builder(context, CHANNEL_PROGRESS)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("Saved $files")
+                .setContentText("From $from you're watching")
+                .setAutoCancel(true)
+                .build(),
+        )
+    }
 
     fun cancel(context: Context, id: Int) {
         runCatching { manager(context).cancel(id) }

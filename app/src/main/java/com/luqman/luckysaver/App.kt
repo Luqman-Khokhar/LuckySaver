@@ -6,6 +6,7 @@ import com.luqman.luckysaver.data.AppDatabase
 import com.luqman.luckysaver.data.Quality
 import com.luqman.luckysaver.data.SettingsStore
 import com.luqman.luckysaver.download.DownloadNotifications
+import com.luqman.luckysaver.download.StoryWatchWorker
 import com.luqman.luckysaver.resolve.ApiResolver
 import com.luqman.luckysaver.resolve.EmbedResolver
 import com.luqman.luckysaver.resolve.IgSession
@@ -26,6 +27,10 @@ class App : Application() {
         runCatching { CookieManager.getInstance().setAcceptCookie(true) }
         // Endpoint drift is the usual reason this app breaks; pick up any fix without a rebuild.
         scope.launch { remoteConfig.refresh() }
+        // Keeps the schedule matching the setting, including after an update or a reboot.
+        if (settings.current.storyWatchEnabled) {
+            StoryWatchWorker.schedule(this, settings.current.storyIntervalHours)
+        }
     }
 
     val http: OkHttpClient by lazy {

@@ -86,6 +86,9 @@ fun HomeScreen(
     onHistory: () -> Unit,
     onSettings: () -> Unit,
     onUndo: (() -> Unit)?,
+    clipboardLink: String?,
+    onUseClipboard: () -> Unit,
+    onDismissClipboard: () -> Unit,
     onClearFailed: () -> Unit,
     onMessageShown: () -> Unit,
 ) {
@@ -158,6 +161,10 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Fetch media") }
 
+                    if (clipboardLink != null) {
+                        ClipboardBanner(clipboardLink, onUseClipboard, onDismissClipboard)
+                    }
+
                     BubbleRow(bubbleOn, onToggleBubble)
 
                     if (!loggedIn) Text(
@@ -175,6 +182,36 @@ fun HomeScreen(
                         onToggle(item.key)
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Offers the Instagram link already sitting in the clipboard, so pasting is unnecessary. */
+@Composable
+private fun ClipboardBanner(link: String, onUse: () -> Unit, onDismiss: () -> Unit) {
+    Card(
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                "Instagram link copied",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            Text(
+                link,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onUse) { Text("Fetch it") }
+                TextButton(onClick = onDismiss) { Text("Dismiss") }
             }
         }
     }

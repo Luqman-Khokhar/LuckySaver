@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.luqman.luckysaver.App
+import com.luqman.luckysaver.core.IgLinkParser
 import com.luqman.luckysaver.core.MediaItem
 import com.luqman.luckysaver.core.ResolveException
 import com.luqman.luckysaver.data.DownloadEntity
@@ -32,6 +33,7 @@ data class QueueStatus(val running: Int, val queued: Int, val failed: List<Strin
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as App
+    private var dismissedLink: String? = null
     private val workManager = WorkManager.getInstance(application)
 
     private val _input = MutableStateFlow("")
@@ -44,6 +46,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val loggedIn: StateFlow<Boolean> = _loggedIn.asStateFlow()
 
     val settings: StateFlow<Settings> get() = app.settings.state
+
+    private val _clipboardLink = MutableStateFlow<String?>(null)
+    val clipboardLink: StateFlow<String?> = _clipboardLink.asStateFlow()
 
     private val _undoable = MutableStateFlow<List<java.util.UUID>>(emptyList())
     val undoable: StateFlow<List<java.util.UUID>> = _undoable.asStateFlow()
@@ -69,6 +74,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), QueueStatus(0, 0, emptyList()))
 
     fun onInput(text: String) { _input.value = text }
+
+    /**
+     * Called when the app comes to the front: an Instagram link sitting in the clipboard is
+     * almost always what the user came to save, so offer it instead of making them paste.
+     */
+    fun onClipboard(text: String?) {
+        val link = text?.trim().orEmpty()
+        _clipboardLink.value = when {
+            link.isEmpty() -> null
+            IgLinkParser.parse(link) == null -> null
+            link == _input.value.trim() -> null
+            link == dismissedLink -> null
+            else -> link
+        }
+    }
+
+    fun dismissClipboard() {
+        dismissedLink = _clipboardLink.value
+        _clipboardLink.value = null
+    }
+
+    fun useClipboardLink() {
+        val link = _clipboardLink.value ?: return
+        dismissedLink = link
+        _clipboardLink.value = null
+        _input.value = link
+        resolve()
+    }
 
     fun refreshLogin() {
         _loggedIn.value = app.session.isLoggedIn
@@ -109,7 +142,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     emptySet()
                 }
-                ResolveState.Ready(items, selected = items.map { it.key }.toSet() - saved, alreadySaved = saved)
+                val fresh = items.filter { it.key !in saved }
+                // Nothing to choose between on a single-item post, so don't make the user choose.
+                if (app.settings.current.autoDownload && fresh.size == 1) {
+                    _undoable.value = DownloadWorker.enqueueAll(getApplication(), fresh)
+                    _message.value = "Downloading"
+                    ResolveState.Ready(items, selected = emptySet(), alreadySaved = saved + fresh.map { it.key })
+                } else {
+                    ResolveState.Ready(items, selected = fresh.map { it.key }.toSet(), alreadySaved = saved)
+                }
             } catch (e: ResolveException) {
                 ResolveState.Error(e.message ?: "Failed", e.needsLogin)
             } catch (e: Exception) {

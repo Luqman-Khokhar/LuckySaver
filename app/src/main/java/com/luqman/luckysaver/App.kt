@@ -9,6 +9,9 @@ import com.luqman.luckysaver.resolve.ApiResolver
 import com.luqman.luckysaver.resolve.EmbedResolver
 import com.luqman.luckysaver.resolve.IgSession
 import com.luqman.luckysaver.resolve.ResolverChain
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -30,6 +33,9 @@ class App : Application() {
     val session: IgSession by lazy { IgSession(this) }
     val db: AppDatabase by lazy { AppDatabase.build(this) }
     val settings: SettingsStore by lazy { SettingsStore(this) }
+
+    /** For work that has to outlive the screen that started it, such as a share with no UI. */
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val resolver: ResolverChain by lazy {
         ResolverChain(
             http,

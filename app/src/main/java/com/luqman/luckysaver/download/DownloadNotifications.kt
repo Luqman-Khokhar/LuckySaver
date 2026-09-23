@@ -116,6 +116,19 @@ object DownloadNotifications {
         )
     }
 
+    fun alreadySaved(context: Context) {
+        notify(
+            context, ID_STARTED,
+            builder(context, CHANNEL_STATUS)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("Already saved")
+                .setContentText("That post is already in your gallery")
+                .setAutoCancel(true)
+                .setTimeoutAfter(6_000)
+                .build(),
+        )
+    }
+
     fun cancel(context: Context, id: Int) {
         runCatching { manager(context).cancel(id) }
     }

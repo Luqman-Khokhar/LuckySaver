@@ -1,6 +1,7 @@
 package com.luqman.luckysaver
 
 import android.Manifest
+import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -58,6 +59,7 @@ class MainActivity : ComponentActivity() {
                 val bubbleOn by vm.bubbleOn.collectAsStateWithLifecycle()
                 val undoable by vm.undoable.collectAsStateWithLifecycle()
                 val settings by vm.settings.collectAsStateWithLifecycle()
+                val clipboardLink by vm.clipboardLink.collectAsStateWithLifecycle()
                 val history by vm.history.collectAsStateWithLifecycle()
 
                 BackHandler(enabled = screen != Screen.HOME && screen != Screen.WELCOME) {
@@ -84,6 +86,9 @@ class MainActivity : ComponentActivity() {
                         onHistory = { screen = Screen.HISTORY }, onClearFailed = vm::clearFailed,
                         onSettings = { screen = Screen.SETTINGS },
                         onUndo = if (undoable.isNotEmpty()) vm::undoLastBatch else null,
+                        clipboardLink = clipboardLink,
+                        onUseClipboard = vm::useClipboardLink,
+                        onDismissClipboard = vm::dismissClipboard,
                         onMessageShown = vm::consumeMessage,
                     )
                     Screen.LOGIN -> LoginScreen(
@@ -106,6 +111,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         vm.refreshLogin()
+        // Reading the clipboard is only allowed while focused, which is exactly now.
+        val clip = getSystemService(ClipboardManager::class.java)
+        vm.onClipboard(
+            clip?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString()
+        )
     }
 
     override fun onPause() {

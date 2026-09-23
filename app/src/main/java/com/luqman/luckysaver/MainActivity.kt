@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity() {
                 val settings by vm.settings.collectAsStateWithLifecycle()
                 val clipboardLink by vm.clipboardLink.collectAsStateWithLifecycle()
                 val sessionExpired by vm.sessionExpired.collectAsStateWithLifecycle()
+                val cooldown by vm.cooldown.collectAsStateWithLifecycle()
                 val history by vm.history.collectAsStateWithLifecycle()
 
                 BackHandler(enabled = screen != Screen.HOME && screen != Screen.WELCOME) {
@@ -97,6 +98,7 @@ class MainActivity : ComponentActivity() {
                         onSettings = { screen = Screen.SETTINGS },
                         onUndo = if (undoable.isNotEmpty()) vm::undoLastBatch else null,
                         sessionExpired = sessionExpired,
+                        cooldown = cooldown,
                         clipboardLink = clipboardLink,
                         onUseClipboard = vm::useClipboardLink,
                         onDismissClipboard = vm::dismissClipboard,

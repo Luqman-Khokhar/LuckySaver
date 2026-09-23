@@ -10,6 +10,7 @@ import com.luqman.luckysaver.download.StoryWatchWorker
 import com.luqman.luckysaver.resolve.ApiResolver
 import com.luqman.luckysaver.resolve.EmbedResolver
 import com.luqman.luckysaver.resolve.IgSession
+import com.luqman.luckysaver.resolve.RateLimiter
 import com.luqman.luckysaver.resolve.RemoteConfig
 import com.luqman.luckysaver.resolve.ResolverChain
 import kotlinx.coroutines.CoroutineScope
@@ -48,6 +49,7 @@ class App : Application() {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     val remoteConfig: RemoteConfig by lazy { RemoteConfig(this, http) }
+    val rateLimiter: RateLimiter by lazy { RateLimiter(this) }
     val resolver: ResolverChain by lazy {
         ResolverChain(
             http,
@@ -59,9 +61,16 @@ class App : Application() {
                 ),
                 EmbedResolver(http, session) { remoteConfig.endpoints },
             ),
+            rateLimiter = rateLimiter,
             onSessionExpired = {
                 session.markExpired()
                 DownloadNotifications.sessionExpired(this)
+            },
+            onRateLimited = {
+                // A soft block says nothing about the session. Clear any expiry flag an earlier
+                // build set from the same response, so the user isn't sent to log in for nothing.
+                session.markValid()
+                DownloadNotifications.clearSessionExpired(this)
             },
         )
     }

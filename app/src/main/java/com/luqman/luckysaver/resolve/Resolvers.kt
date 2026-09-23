@@ -18,9 +18,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 
-/** Instagram rarely sends Retry-After; five minutes is the usual soft-block window. */
-private const val DEFAULT_COOLDOWN_MS = 5 * 60 * 1000L
-
 interface MediaResolver {
     val name: String
     fun supports(link: IgLink): Boolean
@@ -104,19 +101,28 @@ class ApiResolver(
         }.build()
         http.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
-            val loginWall = resp.code == 401 || resp.code == 403 ||
-                body.contains("login_required") || body.contains("checkpoint_required")
+            // Instagram's soft block arrives as 401 with require_login set and a "wait a few
+            // minutes" message. Checking the login wall first reads that as a dead session and
+            // sends the user off to log in, which cannot help and costs another request.
+            val softBlocked = resp.code == 429 ||
+                body.contains("wait a few minutes", ignoreCase = true) ||
+                body.contains("rate limit", ignoreCase = true) ||
+                body.contains("Please wait", ignoreCase = true)
+            val loginWall = !softBlocked && (
+                resp.code == 401 || resp.code == 403 ||
+                    body.contains("login_required") || body.contains("checkpoint_required")
+                )
             when {
+                softBlocked -> {
+                    val suggested = resp.header("Retry-After")?.toLongOrNull()?.times(1000) ?: 0
+                    throw ResolveException(
+                        "Instagram asked us to slow down", FailureKind.RATE_LIMITED,
+                        retryAfterMs = suggested,
+                    )
+                }
                 loginWall -> throw ResolveException(
                     "Instagram signed this device out", FailureKind.SESSION_EXPIRED,
                 )
-                resp.code == 429 -> {
-                    val wait = resp.header("Retry-After")?.toLongOrNull()?.times(1000) ?: DEFAULT_COOLDOWN_MS
-                    throw ResolveException(
-                        "Instagram is rate limiting us. Waiting ${wait / 60_000} min before trying again.",
-                        FailureKind.RATE_LIMITED, retryAfterMs = wait,
-                    )
-                }
                 resp.code == 404 -> throw ResolveException(
                     "That post no longer exists, or the account is private to you",
                     FailureKind.NOT_FOUND,
@@ -202,17 +208,21 @@ class EmbedResolver(
 class ResolverChain(
     private val http: OkHttpClient,
     private val resolvers: List<MediaResolver>,
-    private val minIntervalMs: Long = 2_000,
+    private val rateLimiter: RateLimiter,
     /** Fired once the session is known to be dead, so the app can ask for a fresh login. */
     private val onSessionExpired: () -> Unit = {},
+    /** Fired on a soft block, which earlier versions mistook for a dead session. */
+    private val onRateLimited: () -> Unit = {},
 ) {
     private val mutex = Mutex()
     private var lastCall = 0L
-    private var cooldownUntil = 0L
 
     private val api: ApiResolver? get() = resolvers.filterIsInstance<ApiResolver>().firstOrNull()
 
-    val isRateLimited: Boolean get() = cooldownUntil > System.currentTimeMillis()
+    val isRateLimited: Boolean get() = rateLimiter.isCoolingDown
+
+    /** Human-readable time left, for the UI to show instead of a bare error. */
+    fun cooldownRemaining(): String = rateLimiter.describeRemaining()
 
     /** Watchlist check: same throttle and cooldown as everything else on this chain. */
     suspend fun storiesFor(userIds: List<String>): List<MediaItem> = mutex.withLock {
@@ -221,9 +231,9 @@ class ResolverChain(
         guardCooldown()
         throttle()
         try {
-            resolver.storiesFor(userIds)
+            resolver.storiesFor(userIds).also { rateLimiter.recordSuccess() }
         } catch (e: ResolveException) {
-            if (e.kind == FailureKind.RATE_LIMITED) cooldownUntil = System.currentTimeMillis() + e.retryAfterMs
+            if (e.kind == FailureKind.RATE_LIMITED) throw applyBlock(e)
             if (e.kind == FailureKind.SESSION_EXPIRED) onSessionExpired()
             throw e
         }
@@ -233,24 +243,36 @@ class ResolverChain(
         val resolver = api ?: throw ResolveException("Log in first", FailureKind.SESSION_EXPIRED)
         guardCooldown()
         throttle()
-        resolver.lookupUser(username)
-    }
-
-    private fun guardCooldown() {
-        val until = cooldownUntil
-        if (until > System.currentTimeMillis()) {
-            val left = (until - System.currentTimeMillis()) / 1000
-            throw ResolveException(
-                "Instagram asked us to slow down. Try again in ${left / 60}m ${left % 60}s.",
-                FailureKind.RATE_LIMITED, retryAfterMs = until - System.currentTimeMillis(),
-            )
+        try {
+            resolver.lookupUser(username).also { rateLimiter.recordSuccess() }
+        } catch (e: ResolveException) {
+            if (e.kind == FailureKind.RATE_LIMITED) throw applyBlock(e)
+            throw e
         }
     }
 
+    private fun guardCooldown() {
+        if (!rateLimiter.isCoolingDown) return
+        throw ResolveException(
+            "Instagram asked us to slow down. Try again in ${rateLimiter.describeRemaining()}.",
+            FailureKind.RATE_LIMITED, retryAfterMs = rateLimiter.remainingMs,
+        )
+    }
+
     private suspend fun throttle() {
-        val wait = lastCall + minIntervalMs - System.currentTimeMillis()
+        val wait = lastCall + rateLimiter.minIntervalMs - System.currentTimeMillis()
         if (wait > 0) delay(wait)
         lastCall = System.currentTimeMillis()
+    }
+
+    /** Turns a raw block into a persisted, escalating cooldown and a message with the wait in it. */
+    private fun applyBlock(e: ResolveException): ResolveException {
+        val wait = rateLimiter.recordBlock(e.retryAfterMs)
+        onRateLimited()
+        return ResolveException(
+            "Instagram asked us to slow down. Waiting ${wait / 60_000} min before trying again.",
+            FailureKind.RATE_LIMITED, retryAfterMs = wait, cause = e,
+        )
     }
 
     suspend fun resolve(input: String): List<MediaItem> = mutex.withLock {
@@ -272,12 +294,15 @@ class ResolverChain(
             throttle()
             try {
                 val items = r.resolve(link)
-                if (items.isNotEmpty()) return@withLock items
+                if (items.isNotEmpty()) {
+                    rateLimiter.recordSuccess()
+                    return@withLock items
+                }
             } catch (e: ResolveException) {
                 lastError = e
                 // Backing off is the whole point of a 429; trying the next resolver makes it worse.
                 if (e.kind == FailureKind.RATE_LIMITED) {
-                    cooldownUntil = System.currentTimeMillis() + e.retryAfterMs
+                    lastError = applyBlock(e)
                     break
                 }
                 if (e.kind == FailureKind.SESSION_EXPIRED) break

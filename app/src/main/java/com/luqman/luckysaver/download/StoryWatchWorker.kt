@@ -29,6 +29,10 @@ class StoryWatchWorker(context: Context, params: WorkerParameters) : CoroutineWo
     override suspend fun doWork(): Result {
         val accounts = app.db.watched().enabled()
         if (accounts.isEmpty()) return Result.success()
+        if (app.rateLimiter.isCoolingDown) {
+            // Another request now would extend the block; the next scheduled run is soon enough.
+            return Result.success()
+        }
         if (!app.session.isLoggedIn) {
             // Nothing can succeed without a session, and trying repeatedly only draws attention.
             if (app.session.isExpired) DownloadNotifications.sessionExpired(applicationContext)

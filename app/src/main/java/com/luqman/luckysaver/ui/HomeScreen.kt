@@ -88,6 +88,7 @@ fun HomeScreen(
     onSettings: () -> Unit,
     onUndo: (() -> Unit)?,
     sessionExpired: Boolean,
+    cooldown: String?,
     clipboardLink: String?,
     onUseClipboard: () -> Unit,
     onDismissClipboard: () -> Unit,
@@ -162,6 +163,26 @@ fun HomeScreen(
                         enabled = input.isNotBlank() && state !is ResolveState.Loading,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Fetch media") }
+
+                    if (cooldown != null) {
+                        Card(
+                            colors = androidx.compose.material3.CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Instagram asked us to slow down", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "Fetching pauses for $cooldown. Nothing is broken — Instagram limits how " +
+                                        "often an account can call it, and waiting is what clears it. Downloads " +
+                                        "already queued carry on.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
 
                     if (sessionExpired) {
                         Card(

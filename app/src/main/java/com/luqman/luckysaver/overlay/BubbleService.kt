@@ -27,6 +27,7 @@ import androidx.core.app.NotificationCompat
 import com.luqman.luckysaver.App
 import com.luqman.luckysaver.MainActivity
 import com.luqman.luckysaver.R
+import com.luqman.luckysaver.core.FailureKind
 import com.luqman.luckysaver.core.IgLinkParser
 import com.luqman.luckysaver.core.ResolveException
 import com.luqman.luckysaver.download.DownloadNotifications
@@ -186,7 +187,12 @@ class BubbleService : Service() {
                 bubble?.setState(BubbleView.State.Progress(0f))
                 watchDownloads(ids)
             } catch (e: ResolveException) {
-                if (e.needsLogin) signedOut() else fail(e.message ?: "Couldn't fetch that post")
+                when (e.kind) {
+                    FailureKind.SESSION_EXPIRED -> signedOut()
+                    // Nothing is broken and nothing needs doing; just wait it out quietly.
+                    FailureKind.RATE_LIMITED -> fail(e.message ?: "Instagram asked us to slow down", notify = false)
+                    else -> fail(e.message ?: "Couldn't fetch that post")
+                }
             } catch (e: Exception) {
                 fail(e.message ?: "Something went wrong")
             } finally {

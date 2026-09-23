@@ -53,6 +53,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val settings: StateFlow<Settings> get() = app.settings.state
 
+    private val _cooldown = MutableStateFlow<String?>(null)
+    val cooldown: StateFlow<String?> = _cooldown.asStateFlow()
+
     private val _clipboardLink = MutableStateFlow<String?>(null)
     val clipboardLink: StateFlow<String?> = _clipboardLink.asStateFlow()
 
@@ -111,6 +114,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshLogin() {
         _loggedIn.value = app.session.isLoggedIn
+        _cooldown.value = if (app.rateLimiter.isCoolingDown) app.rateLimiter.describeRemaining() else null
         _sessionExpired.value = app.session.isExpired
         _bubbleOn.value = BubbleService.isEnabled(getApplication())
     }
@@ -167,6 +171,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ResolveState.Ready(items, selected = fresh.map { it.key }.toSet(), alreadySaved = saved)
                 }
             } catch (e: ResolveException) {
+                _cooldown.value =
+                    if (app.rateLimiter.isCoolingDown) app.rateLimiter.describeRemaining() else null
                 ResolveState.Error(e.message ?: "Failed", e.needsLogin)
             } catch (e: Exception) {
                 ResolveState.Error(e.message ?: e.javaClass.simpleName, false)

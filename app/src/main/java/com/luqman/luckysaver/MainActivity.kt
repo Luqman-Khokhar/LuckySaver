@@ -24,8 +24,9 @@ import com.luqman.luckysaver.ui.HistoryScreen
 import com.luqman.luckysaver.ui.HomeScreen
 import com.luqman.luckysaver.ui.LoginScreen
 import com.luqman.luckysaver.ui.MainViewModel
+import com.luqman.luckysaver.ui.WelcomeScreen
 
-private enum class Screen { HOME, LOGIN, HISTORY }
+private enum class Screen { WELCOME, HOME, LOGIN, HISTORY }
 
 class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
@@ -43,7 +44,11 @@ class MainActivity : ComponentActivity() {
             val ctx = LocalContext.current
             val colors = if (isSystemInDarkTheme()) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
             MaterialTheme(colorScheme = colors) {
-                var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
+                // Land on the welcome screen until there is a session, so the login requirement
+                // is stated before the first fetch fails.
+                var screen by rememberSaveable {
+                    mutableStateOf(if (vm.loggedIn.value) Screen.HOME else Screen.WELCOME)
+                }
                 val input by vm.input.collectAsStateWithLifecycle()
                 val state by vm.state.collectAsStateWithLifecycle()
                 val loggedIn by vm.loggedIn.collectAsStateWithLifecycle()
@@ -52,8 +57,14 @@ class MainActivity : ComponentActivity() {
                 val bubbleOn by vm.bubbleOn.collectAsStateWithLifecycle()
                 val history by vm.history.collectAsStateWithLifecycle()
 
-                BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
+                BackHandler(enabled = screen == Screen.LOGIN || screen == Screen.HISTORY) {
+                    screen = if (loggedIn || screen == Screen.HISTORY) Screen.HOME else Screen.WELCOME
+                }
                 when (screen) {
+                    Screen.WELCOME -> WelcomeScreen(
+                        onLogin = { screen = Screen.LOGIN },
+                        onSkip = { screen = Screen.HOME },
+                    )
                     Screen.HOME -> HomeScreen(
                         input = input, state = state, loggedIn = loggedIn, queue = queue, message = message,
                         bubbleOn = bubbleOn,
@@ -70,7 +81,12 @@ class MainActivity : ComponentActivity() {
                         onHistory = { screen = Screen.HISTORY }, onClearFailed = vm::clearFailed,
                         onMessageShown = vm::consumeMessage,
                     )
-                    Screen.LOGIN -> LoginScreen(onDone = { vm.refreshLogin(); screen = Screen.HOME })
+                    Screen.LOGIN -> LoginScreen(
+                        onDone = {
+                            vm.refreshLogin()
+                            screen = if (vm.loggedIn.value) Screen.HOME else Screen.WELCOME
+                        },
+                    )
                     Screen.HISTORY -> HistoryScreen(history, onBack = { screen = Screen.HOME }, onForget = vm::forget)
                 }
             }

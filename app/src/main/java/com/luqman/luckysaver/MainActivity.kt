@@ -21,6 +21,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.luqman.luckysaver.download.DownloadNotifications
 import com.luqman.luckysaver.ui.HistoryScreen
 import com.luqman.luckysaver.ui.HomeScreen
 import com.luqman.luckysaver.ui.LoginScreen
@@ -49,7 +50,14 @@ class MainActivity : ComponentActivity() {
                 // Land on the welcome screen until there is a session, so the login requirement
                 // is stated before the first fetch fails.
                 var screen by rememberSaveable {
-                    mutableStateOf(if (vm.loggedIn.value) Screen.HOME else Screen.WELCOME)
+                    mutableStateOf(
+                        when {
+                            intent?.getBooleanExtra(DownloadNotifications.EXTRA_OPEN_LOGIN, false) == true ->
+                                Screen.LOGIN
+                            vm.loggedIn.value -> Screen.HOME
+                            else -> Screen.WELCOME
+                        }
+                    )
                 }
                 val input by vm.input.collectAsStateWithLifecycle()
                 val state by vm.state.collectAsStateWithLifecycle()
@@ -60,6 +68,7 @@ class MainActivity : ComponentActivity() {
                 val undoable by vm.undoable.collectAsStateWithLifecycle()
                 val settings by vm.settings.collectAsStateWithLifecycle()
                 val clipboardLink by vm.clipboardLink.collectAsStateWithLifecycle()
+                val sessionExpired by vm.sessionExpired.collectAsStateWithLifecycle()
                 val history by vm.history.collectAsStateWithLifecycle()
 
                 BackHandler(enabled = screen != Screen.HOME && screen != Screen.WELCOME) {
@@ -86,6 +95,7 @@ class MainActivity : ComponentActivity() {
                         onHistory = { screen = Screen.HISTORY }, onClearFailed = vm::clearFailed,
                         onSettings = { screen = Screen.SETTINGS },
                         onUndo = if (undoable.isNotEmpty()) vm::undoLastBatch else null,
+                        sessionExpired = sessionExpired,
                         clipboardLink = clipboardLink,
                         onUseClipboard = vm::useClipboardLink,
                         onDismissClipboard = vm::dismissClipboard,
@@ -93,7 +103,7 @@ class MainActivity : ComponentActivity() {
                     )
                     Screen.LOGIN -> LoginScreen(
                         onDone = {
-                            vm.refreshLogin()
+                            vm.onLoggedIn()
                             screen = if (vm.loggedIn.value) Screen.HOME else Screen.WELCOME
                         },
                     )

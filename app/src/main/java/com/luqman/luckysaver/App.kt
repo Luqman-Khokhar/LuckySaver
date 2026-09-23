@@ -5,6 +5,7 @@ import android.webkit.CookieManager
 import com.luqman.luckysaver.data.AppDatabase
 import com.luqman.luckysaver.data.Quality
 import com.luqman.luckysaver.data.SettingsStore
+import com.luqman.luckysaver.download.DownloadNotifications
 import com.luqman.luckysaver.resolve.ApiResolver
 import com.luqman.luckysaver.resolve.EmbedResolver
 import com.luqman.luckysaver.resolve.IgSession
@@ -43,6 +44,10 @@ class App : Application() {
                 ApiResolver(http, session) { settings.current.quality == Quality.SMALLER },
                 EmbedResolver(http, session),
             ),
+            onSessionExpired = {
+                session.markExpired()
+                DownloadNotifications.sessionExpired(this)
+            },
         )
     }
 }

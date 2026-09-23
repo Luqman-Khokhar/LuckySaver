@@ -186,7 +186,7 @@ class BubbleService : Service() {
                 bubble?.setState(BubbleView.State.Progress(0f))
                 watchDownloads(ids)
             } catch (e: ResolveException) {
-                fail(e.message ?: "Couldn't fetch that post")
+                if (e.needsLogin) signedOut() else fail(e.message ?: "Couldn't fetch that post")
             } catch (e: Exception) {
                 fail(e.message ?: "Something went wrong")
             } finally {
@@ -258,6 +258,16 @@ class BubbleService : Service() {
         bubble?.setState(BubbleView.State.Success)
         haptic(HapticFeedbackConstants.CONFIRM)
         toast(message)
+        resetLater()
+    }
+
+    /** Nothing the bubble can fix: the app has to be opened to log in again. */
+    private fun signedOut() {
+        busy = false
+        bubble?.setState(BubbleView.State.SignedOut)
+        haptic(HapticFeedbackConstants.REJECT)
+        toast("Instagram session expired — open LuckySaver to log in")
+        DownloadNotifications.sessionExpired(this)
         resetLater()
     }
 

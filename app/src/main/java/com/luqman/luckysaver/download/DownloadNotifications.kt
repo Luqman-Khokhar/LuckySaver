@@ -21,6 +21,9 @@ object DownloadNotifications {
     private const val CHANNEL_PROGRESS = "downloads"
     private const val CHANNEL_STATUS = "download_status"
     private const val ID_STARTED = 1_000
+    private const val ID_SESSION = 1_001
+
+    const val EXTRA_OPEN_LOGIN = "open_login"
 
     private fun manager(context: Context) = context.getSystemService(NotificationManager::class.java)
 
@@ -128,6 +131,31 @@ object DownloadNotifications {
                 .build(),
         )
     }
+
+    /** The one failure the user must act on, so it gets its own sticky notification. */
+    fun sessionExpired(context: Context) {
+        val open = PendingIntent.getActivity(
+            context, 2,
+            Intent(context, com.luqman.luckysaver.MainActivity::class.java)
+                .putExtra(EXTRA_OPEN_LOGIN, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        notify(
+            context, ID_SESSION,
+            builder(context, CHANNEL_STATUS)
+                .setSmallIcon(android.R.drawable.stat_notify_error)
+                .setContentTitle("Instagram session expired")
+                .setContentText("Tap to log in again — downloads can't run until you do")
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setOngoing(true)
+                .setContentIntent(open)
+                .build(),
+        )
+    }
+
+    fun clearSessionExpired(context: Context) = cancel(context, ID_SESSION)
 
     fun cancel(context: Context, id: Int) {
         runCatching { manager(context).cancel(id) }

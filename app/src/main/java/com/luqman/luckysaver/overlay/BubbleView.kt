@@ -25,6 +25,8 @@ class BubbleView(context: Context, iconRes: Int) : View(context) {
         data class Progress(val fraction: Float) : State
         data object Success : State
         data object Error : State
+        /** Session died: not a download failure, and tapping again won't help. */
+        data object SignedOut : State
     }
 
     private val density = resources.displayMetrics.density
@@ -79,7 +81,7 @@ class BubbleView(context: Context, iconRes: Int) : View(context) {
                 animateFractionTo(1f)
                 bounce()
             }
-            is State.Error -> shake()
+            is State.Error, is State.SignedOut -> shake()
             else -> Unit
         }
         if (previous != next) invalidate()
@@ -177,6 +179,10 @@ class BubbleView(context: Context, iconRes: Int) : View(context) {
                 ringPaint.color = COLOR_ERROR
                 canvas.drawCircle(cx, cy, radius + ringWidth / 2, ringPaint)
             }
+            is State.SignedOut -> {
+                ringPaint.color = COLOR_SIGNED_OUT
+                canvas.drawCircle(cx, cy, radius + ringWidth / 2, ringPaint)
+            }
         }
     }
 
@@ -192,5 +198,6 @@ class BubbleView(context: Context, iconRes: Int) : View(context) {
         const val COLOR_WORKING = 0xFF4C8DFF.toInt()
         const val COLOR_SUCCESS = 0xFF1DB954.toInt()
         const val COLOR_ERROR = 0xFFE23B3B.toInt()
+        const val COLOR_SIGNED_OUT = 0xFF9AA4B2.toInt()
     }
 }

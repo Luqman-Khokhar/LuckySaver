@@ -147,6 +147,8 @@ class ResolverChain(
     private val http: OkHttpClient,
     private val resolvers: List<MediaResolver>,
     private val minIntervalMs: Long = 2_000,
+    /** Fired once the session is known to be dead, so the app can ask for a fresh login. */
+    private val onSessionExpired: () -> Unit = {},
 ) {
     private val mutex = Mutex()
     private var lastCall = 0L
@@ -175,6 +177,7 @@ class ResolverChain(
                 lastError = ResolveException("Couldn't parse Instagram response (${r.name}): ${e.message}", cause = e)
             }
         }
+        lastError?.takeIf { it.needsLogin }?.let { onSessionExpired() }
         throw lastError ?: ResolveException("Nothing downloadable found")
     }
 

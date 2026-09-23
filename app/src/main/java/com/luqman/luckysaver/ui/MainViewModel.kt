@@ -11,6 +11,7 @@ import com.luqman.luckysaver.core.MediaItem
 import com.luqman.luckysaver.core.ResolveException
 import com.luqman.luckysaver.data.DownloadEntity
 import com.luqman.luckysaver.data.Settings
+import com.luqman.luckysaver.download.DownloadNotifications
 import com.luqman.luckysaver.download.DownloadWorker
 import com.luqman.luckysaver.overlay.BubbleService
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +45,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _loggedIn = MutableStateFlow(app.session.isLoggedIn)
     val loggedIn: StateFlow<Boolean> = _loggedIn.asStateFlow()
+
+    private val _sessionExpired = MutableStateFlow(app.session.isExpired)
+    val sessionExpired: StateFlow<Boolean> = _sessionExpired.asStateFlow()
 
     val settings: StateFlow<Settings> get() = app.settings.state
 
@@ -105,6 +109,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshLogin() {
         _loggedIn.value = app.session.isLoggedIn
+        _sessionExpired.value = app.session.isExpired
         _bubbleOn.value = BubbleService.isEnabled(getApplication())
     }
 
@@ -119,6 +124,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun logout() {
         app.session.logout()
+        DownloadNotifications.clearSessionExpired(getApplication())
+        refreshLogin()
+    }
+
+    /** Called once a login completes: the session is trustworthy again. */
+    fun onLoggedIn() {
+        app.session.markValid()
+        DownloadNotifications.clearSessionExpired(getApplication())
         refreshLogin()
     }
 

@@ -86,6 +86,7 @@ fun HomeScreen(
     onHistory: () -> Unit,
     onSettings: () -> Unit,
     onUndo: (() -> Unit)?,
+    sessionExpired: Boolean,
     clipboardLink: String?,
     onUseClipboard: () -> Unit,
     onDismissClipboard: () -> Unit,
@@ -161,13 +162,36 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Fetch media") }
 
+                    if (sessionExpired) {
+                        Card(
+                            colors = androidx.compose.material3.CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    "Instagram session expired",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                                Text(
+                                    "Instagram signed this device out. Log in again to keep downloading.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                                Button(onClick = onLogin) { Text("Log in again") }
+                            }
+                        }
+                    }
+
                     if (clipboardLink != null) {
                         ClipboardBanner(clipboardLink, onUseClipboard, onDismissClipboard)
                     }
 
                     BubbleRow(bubbleOn, onToggleBubble)
 
-                    if (!loggedIn) Text(
+                    if (!loggedIn && !sessionExpired) Text(
                         "Not logged in: only public posts and reels work. Log in (use a secondary account) for stories, highlights and private accounts you follow.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

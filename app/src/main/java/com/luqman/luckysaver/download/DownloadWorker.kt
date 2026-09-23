@@ -35,11 +35,14 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
     private val app get() = applicationContext as App
 
     override suspend fun doWork(): Result {
-        val url = inputData.getString(K_URL) ?: return Result.failure()
+        val originalUrl = inputData.getString(K_URL) ?: return Result.failure()
         val key = inputData.getString(K_KEY) ?: return Result.failure()
         val fileName = inputData.getString(K_FILE) ?: return Result.failure()
         val isVideo = inputData.getBoolean(K_VIDEO, false)
         val saver = MediaStoreSaver(applicationContext)
+        // A retry re-runs with the original input data, so a URL refreshed on the previous
+        // attempt is stashed rather than kept in memory.
+        val url = refreshedUrls(applicationContext).getString(key, null) ?: originalUrl
 
         runCatching { setForeground(getForegroundInfo()) }
 
@@ -56,7 +59,8 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                     .header("Referer", "https://www.instagram.com/")
                     .build()
                 app.http.newCall(req).execute().use { resp ->
-                    // 403 on the CDN = signed URL expired; retrying the same URL won't help.
+                    // 403 on the CDN means the signed URL expired. The same URL will never work
+                    // again, but the post it came from can be resolved afresh.
                     if (resp.code == 403 || resp.code == 410) throw ExpiredUrl()
                     if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
                     val body = resp.body ?: throw IOException("Empty body")
@@ -89,6 +93,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                     }
                 }
                 saver.publish(uri)
+                refreshedUrls(applicationContext).edit().remove(key).apply()
                 DownloadNotifications.saved(applicationContext, resultNotificationId, fileName, uri, isVideo)
                 app.db.downloads().upsert(
                     DownloadEntity(
@@ -104,10 +109,18 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                 Result.success()
             } catch (e: ExpiredUrl) {
                 saver.discard(uri)
-                DownloadNotifications.failed(
-                    applicationContext, resultNotificationId, fileName, "Link expired. Fetch the post again.",
-                )
-                Result.failure(workDataOf(K_ERROR to "Link expired. Resolve the post again."))
+                val refreshed = refreshUrl(key)
+                if (refreshed != null && runAttemptCount < 3) {
+                    // Hand the fresh URL to the retry rather than telling the user to redo it.
+                    refreshedUrls(applicationContext).edit().putString(key, refreshed).apply()
+                    Result.retry()
+                } else {
+                    DownloadNotifications.failed(
+                        applicationContext, resultNotificationId, fileName,
+                        "Instagram's link expired and the post couldn't be read again.",
+                    )
+                    Result.failure(workDataOf(K_ERROR to "Link expired and could not be refreshed"))
+                }
             } catch (e: IOException) {
                 saver.discard(uri)
                 if (runAttemptCount < 3) {
@@ -124,6 +137,19 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                 throw e
             }
         }
+    }
+
+    /**
+     * Re-resolves the post this file came from and returns the current URL for the same item.
+     * Shortcode links only: a story URL is not addressable once it has rotated.
+     */
+    private suspend fun refreshUrl(key: String): String? {
+        val code = inputData.getString(K_CODE)?.takeIf { it.isNotBlank() && it != "profile" } ?: return null
+        return runCatching {
+            app.resolver.resolve("https://www.instagram.com/p/$code/")
+                .firstOrNull { it.key == key }
+                ?.url
+        }.getOrNull()
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo {
@@ -165,6 +191,9 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         const val K_PROGRESS = "progress"
         const val K_ERROR = "error"
         private const val CHANNEL = "downloads"
+
+        private fun refreshedUrls(context: Context) =
+            context.getSharedPreferences("refreshed_urls", Context.MODE_PRIVATE)
 
         /** Queues a batch, raises one "started" popup, and returns the work ids to watch. */
         fun enqueueAll(context: Context, items: List<MediaItem>): List<java.util.UUID> {

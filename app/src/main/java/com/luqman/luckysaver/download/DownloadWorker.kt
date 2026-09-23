@@ -175,19 +175,26 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         }
 
         fun enqueue(context: Context, item: MediaItem): java.util.UUID {
+            val settings = (context.applicationContext as App).settings.current
             val request = OneTimeWorkRequestBuilder<DownloadWorker>()
                 .setInputData(
                     workDataOf(
                         K_URL to item.url,
                         K_KEY to item.key,
-                        K_FILE to item.fileName(),
+                        K_FILE to item.fileName(settings.fileNameTemplate),
                         K_VIDEO to (item.kind == MediaKind.VIDEO),
                         K_OWNER to item.owner,
                         K_CODE to item.shortcode,
                         K_TAKEN to item.takenAt,
                     )
                 )
-                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(
+                            if (settings.wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
+                        )
+                        .build()
+                )
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
                 .addTag(TAG)

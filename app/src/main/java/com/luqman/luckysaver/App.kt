@@ -3,6 +3,8 @@ package com.luqman.luckysaver
 import android.app.Application
 import android.webkit.CookieManager
 import com.luqman.luckysaver.data.AppDatabase
+import com.luqman.luckysaver.data.Quality
+import com.luqman.luckysaver.data.SettingsStore
 import com.luqman.luckysaver.resolve.ApiResolver
 import com.luqman.luckysaver.resolve.EmbedResolver
 import com.luqman.luckysaver.resolve.IgSession
@@ -27,7 +29,14 @@ class App : Application() {
     }
     val session: IgSession by lazy { IgSession(this) }
     val db: AppDatabase by lazy { AppDatabase.build(this) }
+    val settings: SettingsStore by lazy { SettingsStore(this) }
     val resolver: ResolverChain by lazy {
-        ResolverChain(http, listOf(ApiResolver(http, session), EmbedResolver(http, session)))
+        ResolverChain(
+            http,
+            listOf(
+                ApiResolver(http, session) { settings.current.quality == Quality.SMALLER },
+                EmbedResolver(http, session),
+            ),
+        )
     }
 }

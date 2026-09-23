@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Login
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -44,6 +45,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -82,13 +84,23 @@ fun HomeScreen(
     onLogin: () -> Unit,
     onLogout: () -> Unit,
     onHistory: () -> Unit,
+    onSettings: () -> Unit,
+    onUndo: (() -> Unit)?,
     onClearFailed: () -> Unit,
     onMessageShown: () -> Unit,
 ) {
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(message) {
-        if (message != null) { snackbar.showSnackbar(message); onMessageShown() }
+        if (message == null) return@LaunchedEffect
+        val undo = onUndo
+        val result = snackbar.showSnackbar(
+            message = message,
+            actionLabel = if (undo != null) "Undo" else null,
+            withDismissAction = undo == null,
+        )
+        if (result == SnackbarResult.ActionPerformed) undo?.invoke()
+        onMessageShown()
     }
     val ready = state as? ResolveState.Ready
 
@@ -98,6 +110,7 @@ fun HomeScreen(
                 title = { Text("LuckySaver") },
                 actions = {
                     IconButton(onClick = onHistory) { Icon(Icons.Default.History, "Download history") }
+                    IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings") }
                     if (loggedIn) IconButton(onClick = onLogout) { Icon(Icons.Default.Logout, "Log out of Instagram") }
                     else IconButton(onClick = onLogin) { Icon(Icons.Default.Login, "Log in to Instagram") }
                 },
@@ -220,8 +233,23 @@ private fun StateHeader(
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(top = 16.dp),
         )
-        ResolveState.Loading -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
+        ResolveState.Loading -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                Text("Reading the post…", style = MaterialTheme.typography.bodySmall)
+            }
+            // Placeholder tiles keep the grid from jumping when the real items arrive.
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                repeat(3) {
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    )
+                }
+            }
         }
         is ResolveState.Error -> Card(
             colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),

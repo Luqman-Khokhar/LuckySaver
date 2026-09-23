@@ -24,9 +24,10 @@ import com.luqman.luckysaver.ui.HistoryScreen
 import com.luqman.luckysaver.ui.HomeScreen
 import com.luqman.luckysaver.ui.LoginScreen
 import com.luqman.luckysaver.ui.MainViewModel
+import com.luqman.luckysaver.ui.SettingsScreen
 import com.luqman.luckysaver.ui.WelcomeScreen
 
-private enum class Screen { WELCOME, HOME, LOGIN, HISTORY }
+private enum class Screen { WELCOME, HOME, LOGIN, HISTORY, SETTINGS }
 
 class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
@@ -55,10 +56,12 @@ class MainActivity : ComponentActivity() {
                 val queue by vm.queue.collectAsStateWithLifecycle()
                 val message by vm.message.collectAsStateWithLifecycle()
                 val bubbleOn by vm.bubbleOn.collectAsStateWithLifecycle()
+                val undoable by vm.undoable.collectAsStateWithLifecycle()
+                val settings by vm.settings.collectAsStateWithLifecycle()
                 val history by vm.history.collectAsStateWithLifecycle()
 
-                BackHandler(enabled = screen == Screen.LOGIN || screen == Screen.HISTORY) {
-                    screen = if (loggedIn || screen == Screen.HISTORY) Screen.HOME else Screen.WELCOME
+                BackHandler(enabled = screen != Screen.HOME && screen != Screen.WELCOME) {
+                    screen = if (loggedIn || screen != Screen.LOGIN) Screen.HOME else Screen.WELCOME
                 }
                 when (screen) {
                     Screen.WELCOME -> WelcomeScreen(
@@ -79,6 +82,8 @@ class MainActivity : ComponentActivity() {
                         onSelectAll = vm::selectAll, onDownload = vm::downloadSelected,
                         onLogin = { screen = Screen.LOGIN }, onLogout = vm::logout,
                         onHistory = { screen = Screen.HISTORY }, onClearFailed = vm::clearFailed,
+                        onSettings = { screen = Screen.SETTINGS },
+                        onUndo = if (undoable.isNotEmpty()) vm::undoLastBatch else null,
                         onMessageShown = vm::consumeMessage,
                     )
                     Screen.LOGIN -> LoginScreen(
@@ -88,6 +93,11 @@ class MainActivity : ComponentActivity() {
                         },
                     )
                     Screen.HISTORY -> HistoryScreen(history, onBack = { screen = Screen.HOME }, onForget = vm::forget)
+                    Screen.SETTINGS -> SettingsScreen(
+                        settings = settings,
+                        onChange = vm::updateSettings,
+                        onBack = { screen = Screen.HOME },
+                    )
                 }
             }
         }

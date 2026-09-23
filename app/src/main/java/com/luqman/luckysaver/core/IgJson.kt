@@ -6,7 +6,9 @@ import org.json.JSONObject
 /** Parses Instagram private-API (v1) media nodes into [MediaItem]s. Pure; unit-testable. */
 object IgJson {
 
-    fun parseMedia(node: JSONObject): List<MediaItem> {
+    private const val SMALL_MIN_WIDTH = 640
+
+    fun parseMedia(node: JSONObject, preferSmaller: Boolean = false): List<MediaItem> {
         val owner = node.optJSONObject("user")?.optString("username").orEmpty()
             .ifEmpty { node.optJSONObject("owner")?.optString("username").orEmpty() }
             .ifEmpty { "instagram" }
@@ -18,17 +20,18 @@ object IgJson {
         val carousel = node.optJSONArray("carousel_media")
         if (node.optInt("media_type") == 8 && carousel != null) {
             return (0 until carousel.length()).mapNotNull { i ->
-                single(carousel.getJSONObject(i), "${pk}_$i", owner, code, takenAt, caption)
+                single(carousel.getJSONObject(i), "${pk}_$i", owner, code, takenAt, caption, preferSmaller)
             }
         }
-        return listOfNotNull(single(node, "${pk}_0", owner, code, takenAt, caption))
+        return listOfNotNull(single(node, "${pk}_0", owner, code, takenAt, caption, preferSmaller))
     }
 
     private fun single(
         n: JSONObject, key: String, owner: String, code: String?, takenAt: Long, caption: String?,
+        preferSmaller: Boolean = false,
     ): MediaItem? {
-        val image = bestCandidate(n.optJSONObject("image_versions2")?.optJSONArray("candidates"))
-        val video = bestCandidate(n.optJSONArray("video_versions"))
+        val image = pickCandidate(n.optJSONObject("image_versions2")?.optJSONArray("candidates"), preferSmaller)
+        val video = pickCandidate(n.optJSONArray("video_versions"), preferSmaller)
         val isVideo = n.optInt("media_type") == 2 || video != null
         val chosen = (if (isVideo) video else image) ?: return null
         return MediaItem(
@@ -45,12 +48,21 @@ object IgJson {
         )
     }
 
-    private fun bestCandidate(arr: JSONArray?): JSONObject? {
+    /**
+     * Largest by pixel count, or the smallest usable one when the user asked for smaller files.
+     * Instagram lists thumbnails in the same array, so the smaller pick has a floor.
+     */
+    private fun pickCandidate(arr: JSONArray?, preferSmaller: Boolean = false): JSONObject? {
         if (arr == null || arr.length() == 0) return null
-        return (0 until arr.length()).map { arr.getJSONObject(it) }
+        val usable = (0 until arr.length()).map { arr.getJSONObject(it) }
             .filter { it.optString("url").isNotEmpty() }
-            .maxByOrNull { it.optInt("width") * it.optInt("height") }
+        if (usable.isEmpty()) return null
+        if (!preferSmaller) return usable.maxByOrNull { it.optInt("width") * it.optInt("height") }
+        return usable.filter { it.optInt("width") >= SMALL_MIN_WIDTH }
+            .minByOrNull { it.optInt("width") * it.optInt("height") }
+            ?: usable.maxByOrNull { it.optInt("width") * it.optInt("height") }
     }
+
 
     /** reels_media responses come either as {"reels": {id: {...}}} or {"reels_media": [...]}. */
     fun parseReels(root: JSONObject): List<JSONObject> {

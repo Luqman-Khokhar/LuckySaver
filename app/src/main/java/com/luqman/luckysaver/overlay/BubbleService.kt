@@ -11,13 +11,17 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.luqman.luckysaver.App
@@ -54,6 +58,7 @@ class BubbleService : Service() {
     private lateinit var windowManager: WindowManager
     private var bubble: BubbleView? = null
     private var watchJob: Job? = null
+    private var menu: LinearLayout? = null
     private var params: WindowManager.LayoutParams? = null
     private var busy = false
 
@@ -77,6 +82,7 @@ class BubbleService : Service() {
 
     override fun onDestroy() {
         watchJob?.cancel()
+        dismissMenu()
         bubble?.let { runCatching { windowManager.removeView(it) } }
         bubble = null
         scope.cancel()
@@ -140,9 +146,11 @@ class BubbleService : Service() {
                         prefs(this@BubbleService).edit()
                             .putInt(KEY_X, layout.x).putInt(KEY_Y, layout.y).apply()
                     } else if (System.currentTimeMillis() - downAt < LONG_PRESS_MS) {
+                        v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                         onBubbleTapped()
                     } else {
-                        v.performClick()
+                        v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        showMenu(layout)
                     }
                 }
             }
@@ -234,6 +242,7 @@ class BubbleService : Service() {
                             fail("Download failed", notify = false)
                         } else {
                             bubble?.setState(BubbleView.State.Success)
+                            haptic(HapticFeedbackConstants.CONFIRM)
                             resetLater()
                         }
                         watchJob?.cancel()
@@ -247,6 +256,7 @@ class BubbleService : Service() {
     private fun succeed(message: String) {
         busy = false
         bubble?.setState(BubbleView.State.Success)
+        haptic(HapticFeedbackConstants.CONFIRM)
         toast(message)
         resetLater()
     }
@@ -254,6 +264,7 @@ class BubbleService : Service() {
     private fun fail(message: String, notify: Boolean = true) {
         busy = false
         bubble?.setState(BubbleView.State.Error)
+        haptic(HapticFeedbackConstants.REJECT)
         toast(message)
         if (notify) DownloadNotifications.resolveFailed(this, message)
         resetLater()
@@ -264,6 +275,69 @@ class BubbleService : Service() {
             delay(RESET_DELAY_MS)
             if (!busy && watchJob?.isActive != true) bubble?.setState(BubbleView.State.Idle)
         }
+    }
+
+    /** Feedback you can feel: the bubble is used while looking at another app. */
+    private fun haptic(constant: Int) {
+        runCatching { bubble?.performHapticFeedback(constant) }
+    }
+
+    /** Long-press menu, shown next to the bubble and dismissed by touching anywhere else. */
+    private fun showMenu(anchor: WindowManager.LayoutParams) {
+        if (menu != null) return
+        val density = resources.displayMetrics.density
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 14 * density
+                setColor(0xF21B1F24.toInt())
+            }
+            elevation = 10 * density
+        }
+        fun item(label: String, onClick: () -> Unit) = TextView(this).apply {
+            text = label
+            setTextColor(0xFFF2F4F6.toInt())
+            textSize = 15f
+            setPadding((20 * density).toInt(), (14 * density).toInt(), (20 * density).toInt(), (14 * density).toInt())
+            setOnClickListener {
+                dismissMenu()
+                onClick()
+            }
+        }
+        container.addView(item("Open LuckySaver") {
+            startActivity(
+                Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        })
+        container.addView(item("Turn off bubble") { stopBubble() })
+
+        val layout = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = anchor.x
+            y = anchor.y + (64 * density).toInt()
+        }
+        container.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE) dismissMenu()
+            false
+        }
+        runCatching { windowManager.addView(container, layout) }
+            .onSuccess { menu = container }
+    }
+
+    private fun dismissMenu() {
+        menu?.let { runCatching { windowManager.removeView(it) } }
+        menu = null
+    }
+
+    private fun stopBubble() {
+        startService(Intent(this, BubbleService::class.java).setAction(ACTION_STOP))
     }
 
     private fun toast(message: String) {

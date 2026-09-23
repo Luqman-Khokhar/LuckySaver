@@ -9,6 +9,7 @@ import com.luqman.luckysaver.App
 import com.luqman.luckysaver.core.MediaItem
 import com.luqman.luckysaver.core.ResolveException
 import com.luqman.luckysaver.data.DownloadEntity
+import com.luqman.luckysaver.data.Settings
 import com.luqman.luckysaver.download.DownloadWorker
 import com.luqman.luckysaver.overlay.BubbleService
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,6 +42,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _loggedIn = MutableStateFlow(app.session.isLoggedIn)
     val loggedIn: StateFlow<Boolean> = _loggedIn.asStateFlow()
+
+    val settings: StateFlow<Settings> get() = app.settings.state
+
+    private val _undoable = MutableStateFlow<List<java.util.UUID>>(emptyList())
+    val undoable: StateFlow<List<java.util.UUID>> = _undoable.asStateFlow()
 
     private val _bubbleOn = MutableStateFlow(BubbleService.isEnabled(application))
     val bubbleOn: StateFlow<Boolean> = _bubbleOn.asStateFlow()
@@ -98,7 +104,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _state.value = try {
                 val items = app.resolver.resolve(text)
-                val saved = app.db.downloads().existingKeys(items.map { it.key }).toSet()
+                val saved = if (app.settings.current.skipDuplicates) {
+                    app.db.downloads().existingKeys(items.map { it.key }).toSet()
+                } else {
+                    emptySet()
+                }
                 ResolveState.Ready(items, selected = items.map { it.key }.toSet() - saved, alreadySaved = saved)
             } catch (e: ResolveException) {
                 ResolveState.Error(e.message ?: "Failed", e.needsLogin)
@@ -120,12 +130,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun downloadSelected() {
         val s = _state.value as? ResolveState.Ready ?: return
         val picked = s.items.filter { it.key in s.selected }
-        DownloadWorker.enqueueAll(getApplication(), picked)
+        _undoable.value = DownloadWorker.enqueueAll(getApplication(), picked)
         _message.value = "Queued ${picked.size} file${if (picked.size == 1) "" else "s"}"
         _state.value = s.copy(selected = emptySet(), alreadySaved = s.alreadySaved + picked.map { it.key })
     }
 
     fun clearFailed() { workManager.pruneWork() }
+
+    /** Cancels the batch queued a moment ago; anything already written stays. */
+    fun undoLastBatch() {
+        _undoable.value.forEach { workManager.cancelWorkById(it) }
+        _undoable.value = emptyList()
+        _message.value = "Download cancelled"
+    }
+
+    fun updateSettings(block: (Settings) -> Settings) = app.settings.update(block)
 
     /** Drop history rows whose file the user deleted from the gallery. */
     fun forget(entity: DownloadEntity) {

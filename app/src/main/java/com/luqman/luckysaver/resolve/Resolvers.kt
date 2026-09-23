@@ -24,7 +24,11 @@ interface MediaResolver {
 }
 
 /** Logged-in private web API. Handles posts, reels, stories, highlights, profile pictures. */
-class ApiResolver(private val http: OkHttpClient, private val session: IgSession) : MediaResolver {
+class ApiResolver(
+    private val http: OkHttpClient,
+    private val session: IgSession,
+    private val preferSmaller: () -> Boolean = { false },
+) : MediaResolver {
     override val name = "api"
     override fun supports(link: IgLink) = session.isLoggedIn && link !is IgLink.Share
 
@@ -32,19 +36,19 @@ class ApiResolver(private val http: OkHttpClient, private val session: IgSession
         is IgLink.Post -> {
             val root = getJson("/api/v1/media/${Shortcode.toMediaId(link.shortcode)}/info/")
             val items = root.optJSONArray("items") ?: throw ResolveException("No items in response")
-            (0 until items.length()).flatMap { IgJson.parseMedia(items.getJSONObject(it)) }
+            (0 until items.length()).flatMap { IgJson.parseMedia(items.getJSONObject(it), preferSmaller()) }
         }
         is IgLink.Story -> {
             val userId = userInfo(link.username).getString("id")
             val nodes = IgJson.parseReels(getJson("/api/v1/feed/reels_media/?reel_ids=$userId"))
             if (nodes.isEmpty()) throw ResolveException("@${link.username} has no active stories")
             val picked = link.storyPk?.let { pk -> nodes.filter { it.optString("pk") == pk }.ifEmpty { nodes } } ?: nodes
-            picked.flatMap(IgJson::parseMedia)
+            picked.flatMap { IgJson.parseMedia(it, preferSmaller()) }
         }
         is IgLink.Highlight -> {
             val nodes = IgJson.parseReels(getJson("/api/v1/feed/reels_media/?reel_ids=highlight:${link.highlightId}"))
             if (nodes.isEmpty()) throw ResolveException("Highlight is empty or unavailable")
-            nodes.flatMap(IgJson::parseMedia)
+            nodes.flatMap { IgJson.parseMedia(it, preferSmaller()) }
         }
         is IgLink.Profile -> {
             val user = userInfo(link.username)

@@ -166,14 +166,15 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         const val K_ERROR = "error"
         private const val CHANNEL = "downloads"
 
-        /** Queues a batch and raises a single "started" popup for it. */
-        fun enqueueAll(context: Context, items: List<MediaItem>) {
-            if (items.isEmpty()) return
-            items.forEach { enqueue(context, it) }
+        /** Queues a batch, raises one "started" popup, and returns the work ids to watch. */
+        fun enqueueAll(context: Context, items: List<MediaItem>): List<java.util.UUID> {
+            if (items.isEmpty()) return emptyList()
+            val ids = items.map { enqueue(context, it) }
             DownloadNotifications.started(context, items.size)
+            return ids
         }
 
-        fun enqueue(context: Context, item: MediaItem) {
+        fun enqueue(context: Context, item: MediaItem): java.util.UUID {
             val request = OneTimeWorkRequestBuilder<DownloadWorker>()
                 .setInputData(
                     workDataOf(
@@ -194,6 +195,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                 .build()
             WorkManager.getInstance(context)
                 .enqueueUniqueWork("dl-${item.key}", ExistingWorkPolicy.KEEP, request)
+            return request.id
         }
     }
 }

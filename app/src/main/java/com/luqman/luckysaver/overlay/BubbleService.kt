@@ -11,7 +11,6 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
@@ -19,7 +18,6 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.ImageView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.luqman.luckysaver.App
@@ -34,6 +32,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import androidx.work.WorkQuery
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -50,7 +52,8 @@ class BubbleService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var windowManager: WindowManager
-    private var bubble: ImageView? = null
+    private var bubble: BubbleView? = null
+    private var watchJob: Job? = null
     private var params: WindowManager.LayoutParams? = null
     private var busy = false
 
@@ -73,6 +76,7 @@ class BubbleService : Service() {
     }
 
     override fun onDestroy() {
+        watchJob?.cancel()
         bubble?.let { runCatching { windowManager.removeView(it) } }
         bubble = null
         scope.cancel()
@@ -96,14 +100,8 @@ class BubbleService : Service() {
             x = prefs.getInt(KEY_X, 0)
             y = prefs.getInt(KEY_Y, 400)
         }
-        val view = ImageView(this).apply {
-            setImageResource(R.drawable.ic_launcher)
-            val size = (56 * resources.displayMetrics.density).toInt()
-            layoutParams = android.view.ViewGroup.LayoutParams(size, size)
+        val view = BubbleView(this, R.drawable.ic_launcher).apply {
             contentDescription = getString(R.string.bubble_description)
-            alpha = 0.9f
-            background = stateBackground(COLOR_IDLE)
-            elevation = 8 * resources.displayMetrics.density
         }
         view.setOnTouchListener(dragListener(layout))
         runCatching { windowManager.addView(view, layout) }
@@ -128,8 +126,7 @@ class BubbleService : Service() {
                     touchX = event.rawX
                     touchY = event.rawY
                     downAt = System.currentTimeMillis()
-                    v.animate().cancel()
-                    v.animate().scaleX(0.85f).scaleY(0.85f).alpha(1f).setDuration(80).start()
+                    (v as BubbleView).pressed(true)
                 }
                 MotionEvent.ACTION_MOVE -> {
                     layout.x = startX + (event.rawX - touchX).toInt()
@@ -137,7 +134,7 @@ class BubbleService : Service() {
                     runCatching { windowManager.updateViewLayout(v, layout) }
                 }
                 MotionEvent.ACTION_UP -> {
-                    v.animate().scaleX(1f).scaleY(1f).setDuration(80).start()
+                    (v as BubbleView).pressed(false)
                     val moved = abs(event.rawX - touchX) > TAP_SLOP || abs(event.rawY - touchY) > TAP_SLOP
                     if (moved) {
                         prefs(this@BubbleService).edit()
@@ -176,8 +173,10 @@ class BubbleService : Service() {
                     succeed("Already saved")
                     return@launch
                 }
-                DownloadWorker.enqueueAll(applicationContext, fresh)
-                succeed("Downloading ${fresh.size} file${if (fresh.size == 1) "" else "s"}")
+                val ids = DownloadWorker.enqueueAll(applicationContext, fresh)
+                toast("Downloading ${fresh.size} file${if (fresh.size == 1) "" else "s"}")
+                bubble?.setState(BubbleView.State.Progress(0f))
+                watchDownloads(ids)
             } catch (e: ResolveException) {
                 fail(e.message ?: "Couldn't fetch that post")
             } catch (e: Exception) {
@@ -188,68 +187,9 @@ class BubbleService : Service() {
         }
     }
 
-    /** Slow pulse while resolving, so a tap never looks like it did nothing. */
-    private fun showWorking() {
-        val view = bubble ?: return
-        view.background = stateBackground(COLOR_WORKING)
-        view.animate().cancel()
-        view.animate().alpha(0.45f).setDuration(450)
-            .withEndAction {
-                if (busy) view.animate().alpha(1f).setDuration(450).withEndAction { if (busy) showWorking() }.start()
-            }
-            .start()
-    }
-
-    private fun succeed(message: String) {
-        val view = bubble ?: return
-        busy = false
-        view.animate().cancel()
-        view.alpha = 1f
-        view.background = stateBackground(COLOR_SUCCESS)
-        view.animate().scaleX(1.25f).scaleY(1.25f).setDuration(120)
-            .withEndAction { view.animate().scaleX(1f).scaleY(1f).setDuration(160).start() }
-            .start()
-        toast(message)
-        resetLater()
-    }
-
-    private fun fail(message: String, notify: Boolean = true) {
-        val view = bubble ?: return
-        busy = false
-        view.animate().cancel()
-        view.alpha = 1f
-        view.background = stateBackground(COLOR_ERROR)
-        // Short shake: an error should read differently from a success at a glance.
-        view.animate().translationX(-14f).setDuration(60)
-            .withEndAction {
-                view.animate().translationX(14f).setDuration(60)
-                    .withEndAction { view.animate().translationX(0f).setDuration(60).start() }
-                    .start()
-            }
-            .start()
-        toast(message)
-        if (notify) DownloadNotifications.resolveFailed(this, message)
-        resetLater()
-    }
-
-    private fun resetLater() {
-        scope.launch {
-            delay(RESET_DELAY_MS)
-            if (!busy) {
-                bubble?.background = stateBackground(COLOR_IDLE)
-                bubble?.alpha = 0.9f
-            }
-        }
-    }
-
-    private fun stateBackground(color: Int) = GradientDrawable().apply {
-        shape = GradientDrawable.OVAL
-        setColor(color)
-    }
-
     /**
      * Only the focused window may read the clipboard, so the overlay takes focus for a moment.
-     * The frame delay lets the window manager actually hand focus over before we read.
+     * The short delay lets the window manager actually hand focus over before we read.
      */
     private suspend fun readClipboard(): String? {
         val view = bubble ?: return null
@@ -267,6 +207,63 @@ class BubbleService : Service() {
         layout.flags = UNFOCUSED_FLAGS
         runCatching { windowManager.updateViewLayout(view, layout) }
         return text
+    }
+
+    private fun showWorking() {
+        bubble?.setState(BubbleView.State.Working)
+    }
+
+    /**
+     * Follows the queued work and turns it into one ring fraction: finished files count as whole,
+     * the running one contributes its own percentage.
+     */
+    private fun watchDownloads(ids: List<java.util.UUID>) {
+        watchJob?.cancel()
+        if (ids.isEmpty()) return
+        watchJob = scope.launch {
+            WorkManager.getInstance(applicationContext)
+                .getWorkInfosFlow(WorkQuery.fromIds(ids))
+                .collect { infos ->
+                    val done = infos.count { it.state.isFinished }
+                    val running = infos.filter { it.state == WorkInfo.State.RUNNING }
+                        .sumOf { it.progress.getInt(DownloadWorker.K_PROGRESS, 0) } / 100f
+                    val fraction = ((done + running) / infos.size).coerceIn(0f, 1f)
+                    if (infos.all { it.state.isFinished }) {
+                        val failed = infos.count { it.state == WorkInfo.State.FAILED }
+                        if (failed == infos.size) {
+                            fail("Download failed", notify = false)
+                        } else {
+                            bubble?.setState(BubbleView.State.Success)
+                            resetLater()
+                        }
+                        watchJob?.cancel()
+                    } else {
+                        bubble?.setState(BubbleView.State.Progress(fraction))
+                    }
+                }
+        }
+    }
+
+    private fun succeed(message: String) {
+        busy = false
+        bubble?.setState(BubbleView.State.Success)
+        toast(message)
+        resetLater()
+    }
+
+    private fun fail(message: String, notify: Boolean = true) {
+        busy = false
+        bubble?.setState(BubbleView.State.Error)
+        toast(message)
+        if (notify) DownloadNotifications.resolveFailed(this, message)
+        resetLater()
+    }
+
+    private fun resetLater() {
+        scope.launch {
+            delay(RESET_DELAY_MS)
+            if (!busy && watchJob?.isActive != true) bubble?.setState(BubbleView.State.Idle)
+        }
     }
 
     private fun toast(message: String) {
@@ -315,12 +312,7 @@ class BubbleService : Service() {
         private const val TAP_SLOP = 16f
         private const val LONG_PRESS_MS = 600
         private const val FOCUS_SETTLE_MS = 120L
-        private const val RESET_DELAY_MS = 2_000L
-
-        private const val COLOR_IDLE = 0x00000000
-        private const val COLOR_WORKING = 0xFF3B5BFE.toInt()
-        private const val COLOR_SUCCESS = 0xFF1DB954.toInt()
-        private const val COLOR_ERROR = 0xFFE23B3B.toInt()
+        private const val RESET_DELAY_MS = 2_500L
 
         private const val UNFOCUSED_FLAGS = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS

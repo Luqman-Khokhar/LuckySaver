@@ -209,6 +209,7 @@ class ResolverChain(
     private val http: OkHttpClient,
     private val resolvers: List<MediaResolver>,
     private val rateLimiter: RateLimiter,
+    private val cache: ResolveCache = ResolveCache(),
     /** Fired once the session is known to be dead, so the app can ask for a fresh login. */
     private val onSessionExpired: () -> Unit = {},
     /** Fired on a soft block, which earlier versions mistook for a dead session. */
@@ -275,7 +276,9 @@ class ResolverChain(
         )
     }
 
-    suspend fun resolve(input: String): List<MediaItem> = mutex.withLock {
+    /** @param fresh skips the cache, for refreshing URLs that have already expired. */
+    suspend fun resolve(input: String, fresh: Boolean = false): List<MediaItem> = mutex.withLock {
+        if (!fresh) cache.get(input.trim())?.let { return@withLock it }
         guardCooldown()
         var link = IgLinkParser.parse(input)
             ?: throw ResolveException(
@@ -283,7 +286,11 @@ class ResolverChain(
             )
         if (link is IgLink.Share) link = followShare(link.url)
 
+        // Public posts are tried logged-out first: that spends an IP-based quota rather than the
+        // account's, which is far smaller and far more closely policed. The session still handles
+        // stories, highlights and anything the embed page won't serve.
         val candidates = resolvers.filter { it.supports(link) }
+            .sortedBy { if (link is IgLink.Post && it is EmbedResolver) 0 else 1 }
         if (candidates.isEmpty()) {
             throw ResolveException(
                 "Log in to download stories, highlights and profiles", FailureKind.SESSION_EXPIRED,
@@ -296,6 +303,7 @@ class ResolverChain(
                 val items = r.resolve(link)
                 if (items.isNotEmpty()) {
                     rateLimiter.recordSuccess()
+                    cache.put(input.trim(), items)
                     return@withLock items
                 }
             } catch (e: ResolveException) {

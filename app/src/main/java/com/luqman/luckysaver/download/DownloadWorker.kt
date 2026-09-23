@@ -146,7 +146,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
     private suspend fun refreshUrl(key: String): String? {
         val code = inputData.getString(K_CODE)?.takeIf { it.isNotBlank() && it != "profile" } ?: return null
         return runCatching {
-            app.resolver.resolve("https://www.instagram.com/p/$code/")
+            app.resolver.resolve("https://www.instagram.com/p/$code/", fresh = true)
                 .firstOrNull { it.key == key }
                 ?.url
         }.getOrNull()

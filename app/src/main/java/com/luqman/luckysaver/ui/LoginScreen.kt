@@ -31,6 +31,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import com.luqman.luckysaver.App
+import com.luqman.luckysaver.BuildConfig
 
 /**
  * Real instagram.com login inside a WebView. We never see the password; we only read the
@@ -59,7 +60,9 @@ fun LoginScreen(onDone: () -> Unit) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
-                    WebView.setWebContentsDebuggingEnabled(true)
+                    // Remote inspection is a debug-only affordance; a release build must not
+                    // expose the logged-in session to anything attached over adb.
+                    WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
                     WebView(ctx).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true

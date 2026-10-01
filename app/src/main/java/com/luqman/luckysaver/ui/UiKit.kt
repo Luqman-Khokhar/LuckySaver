@@ -119,6 +119,18 @@ object When {
     fun time(context: Context, millis: Long): String =
         android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(millis))
 
+    /** Short stamp for a tile: the time today, weekday and time this week, the date before that. */
+    fun stamp(context: Context, millis: Long): String {
+        val d = day(millis)
+        val today = LocalDate.now(zone)
+        return when {
+            d == today -> time(context, millis)
+            d.isAfter(today.minusDays(7)) ->
+                d.format(DateTimeFormatter.ofPattern("EEE", Locale.getDefault())) + " " + time(context, millis)
+            else -> d.format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()))
+        }
+    }
+
     /** "Saved today at 12:35", "Saved yesterday at 22:41", "Saved 3 Oct at 09:10". */
     fun savedPhrase(context: Context, millis: Long): String {
         val d = day(millis)

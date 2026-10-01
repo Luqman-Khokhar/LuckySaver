@@ -150,7 +150,8 @@ fun AppShell(
 
     val avatars = remember(accounts) { accounts.orEmpty().associate { it.username.lowercase() to it.avatarUrl } }
     val everything = remember(libraryState, storySections) {
-        (libraryState?.sections.orEmpty() + storySections.orEmpty()).flatMap { it.items }.associateBy { it.key }
+        (libraryState?.sections.orEmpty().flatMap { it.items } + storySections.orEmpty().flatMap { it.items })
+            .associateBy { it.key }
     }
 
     SharedTransitionLayout {

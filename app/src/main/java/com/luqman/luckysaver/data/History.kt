@@ -47,6 +47,9 @@ interface DownloadDao {
     @Query("SELECT * FROM downloads WHERE removed = 0")
     suspend fun present(): List<DownloadEntity>
 
+    @Query("UPDATE downloads SET owner = :owner WHERE key = :key AND owner != :owner")
+    suspend fun correctOwner(key: String, owner: String)
+
     @Query("UPDATE downloads SET removed = 1 WHERE key IN (:keys)")
     suspend fun markRemoved(keys: List<String>)
 

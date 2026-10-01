@@ -76,8 +76,15 @@ object IgJson {
         return out.flatMap { reel ->
             val items = reel.optJSONArray("items") ?: return@flatMap emptyList()
             val reelUser = reel.optJSONObject("user")
+            // A reel's items all belong to the reel's owner. Items can carry a "user" with only an
+            // id, which would leave the owner blank and file every story under the fallback name,
+            // so the reel's own user wins whenever it has a username.
+            val owner = reelUser?.takeIf { it.optString("username").isNotEmpty() }
             (0 until items.length()).map { i ->
-                items.getJSONObject(i).also { if (!it.has("user") && reelUser != null) it.put("user", reelUser) }
+                items.getJSONObject(i).also { item ->
+                    if (owner != null) item.put("user", owner)
+                    else if (!item.has("user") && reelUser != null) item.put("user", reelUser)
+                }
             }
         }
     }

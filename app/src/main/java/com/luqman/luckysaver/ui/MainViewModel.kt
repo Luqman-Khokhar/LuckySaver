@@ -9,10 +9,7 @@ import com.luqman.luckysaver.App
 import com.luqman.luckysaver.core.IgLinkParser
 import com.luqman.luckysaver.core.MediaItem
 import com.luqman.luckysaver.core.ResolveException
-import com.luqman.luckysaver.data.DownloadEntity
 import com.luqman.luckysaver.data.Settings
-import com.luqman.luckysaver.data.WatchedAccount
-import com.luqman.luckysaver.download.StoryWatchWorker
 import com.luqman.luckysaver.download.DownloadNotifications
 import com.luqman.luckysaver.download.DownloadWorker
 import com.luqman.luckysaver.overlay.BubbleService
@@ -75,9 +72,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
-
-    val history: StateFlow<List<DownloadEntity>?> = app.db.downloads().observeAll()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private val _sheetOpen = MutableStateFlow(false)
     /** The download sheet over Saved; it replaces the old home screen. */
@@ -257,86 +251,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateSettings(block: (Settings) -> Settings) = app.settings.update(block)
 
-    // ---- story watchlist ----
-
-    val watched: StateFlow<List<WatchedAccount>> = app.db.watched().observeAll()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    private val _addingAccount = MutableStateFlow(false)
-    val addingAccount: StateFlow<Boolean> = _addingAccount.asStateFlow()
-
-    private val _watchError = MutableStateFlow<String?>(null)
-    val watchError: StateFlow<String?> = _watchError.asStateFlow()
-
-    /** Resolves the username to an id up front, so scheduled checks never look one up. */
-    fun addWatchedAccount(username: String) {
-        val name = username.removePrefix("@").trim()
-        if (name.isBlank() || _addingAccount.value) return
-        if (watched.value.size >= MAX_WATCHED) {
-            _watchError.value = "Watching more than $MAX_WATCHED accounts is asking for trouble"
-            return
-        }
-        _addingAccount.value = true
-        _watchError.value = null
-        viewModelScope.launch {
-            try {
-                val (userId, resolved) = app.resolver.lookupUser(name)
-                app.db.watched().upsert(
-                    WatchedAccount(
-                        userId = userId,
-                        username = resolved,
-                        addedAt = System.currentTimeMillis(),
-                    )
-                )
-                _message.value = "Watching @$resolved"
-            } catch (e: ResolveException) {
-                _watchError.value = e.message
-            } catch (e: Exception) {
-                _watchError.value = e.message ?: "Couldn't add that account"
-            } finally {
-                _addingAccount.value = false
-            }
-        }
-    }
-
-    fun removeWatchedAccount(account: WatchedAccount) {
-        viewModelScope.launch { app.db.watched().delete(account.userId) }
-    }
-
-    fun setAccountEnabled(account: WatchedAccount, enabled: Boolean) {
-        viewModelScope.launch { app.db.watched().setEnabled(account.userId, enabled) }
-    }
-
-    fun setStoryWatching(on: Boolean) {
-        app.settings.update { it.copy(storyWatchEnabled = on) }
-        if (on) {
-            StoryWatchWorker.schedule(getApplication(), app.settings.current.storyIntervalHours)
-        } else {
-            StoryWatchWorker.cancel(getApplication())
-        }
-    }
-
-    fun setStoryInterval(hours: Int) {
-        app.settings.update { it.copy(storyIntervalHours = hours) }
-        if (app.settings.current.storyWatchEnabled) {
-            StoryWatchWorker.schedule(getApplication(), hours)
-        }
-    }
-
-    fun checkStoriesNow() {
-        StoryWatchWorker.runOnce(getApplication())
-        _message.value = "Checking for new stories"
-    }
-
     private companion object {
-        const val MAX_WATCHED = 10
         /** Longer than any single keystroke burst, shorter than the shortest Instagram link. */
         const val PASTE_MIN_CHARS = 12
-    }
-
-    /** Drop history rows whose file the user deleted from the gallery. */
-    fun forget(entity: DownloadEntity) {
-        viewModelScope.launch { app.db.downloads().delete(entity.key) }
     }
 
 }

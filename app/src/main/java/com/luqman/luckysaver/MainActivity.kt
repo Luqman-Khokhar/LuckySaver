@@ -3,51 +3,64 @@ package com.luqman.luckysaver
 import android.Manifest
 import android.content.ClipboardManager
 import android.content.Intent
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luqman.luckysaver.download.DownloadNotifications
-import com.luqman.luckysaver.ui.HistoryScreen
-import com.luqman.luckysaver.ui.HomeScreen
+import com.luqman.luckysaver.ui.AppShell
+import com.luqman.luckysaver.ui.LibraryViewModel
 import com.luqman.luckysaver.ui.LoginScreen
+import com.luqman.luckysaver.ui.LuckyTheme
 import com.luqman.luckysaver.ui.MainViewModel
-import com.luqman.luckysaver.ui.SettingsScreen
-import com.luqman.luckysaver.ui.WatchlistScreen
+import com.luqman.luckysaver.ui.StoriesViewModel
 import com.luqman.luckysaver.ui.WelcomeScreen
+import com.luqman.luckysaver.ui.isAppInDarkTheme
 
-private enum class Screen { WELCOME, HOME, LOGIN, HISTORY, SETTINGS, WATCHLIST }
+private enum class Screen { WELCOME, LOGIN, MAIN }
 
 class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
+    private val library: LibraryViewModel by viewModels()
+    private val stories: StoriesViewModel by viewModels()
     private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
         val notifGranted = Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
         if (!notifGranted) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         if (savedInstanceState == null) handleShare(intent)
 
         setContent {
-            val ctx = LocalContext.current
-            val colors = if (isSystemInDarkTheme()) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
-            MaterialTheme(colorScheme = colors) {
+            val settings by vm.settings.collectAsStateWithLifecycle()
+            val dark = isAppInDarkTheme(settings.darkMode)
+            // System bar icons follow the app's theme, which can differ from the phone's.
+            DisposableEffect(dark) {
+                val style = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { dark }
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+                onDispose { }
+            }
+            LuckyTheme(settings.palette, dark) {
                 // Land on the welcome screen until there is a session, so the login requirement
                 // is stated before the first fetch fails.
                 var screen by rememberSaveable {
@@ -55,88 +68,49 @@ class MainActivity : ComponentActivity() {
                         when {
                             intent?.getBooleanExtra(DownloadNotifications.EXTRA_OPEN_LOGIN, false) == true ->
                                 Screen.LOGIN
-                            vm.loggedIn.value -> Screen.HOME
+                            vm.loggedIn.value -> Screen.MAIN
                             else -> Screen.WELCOME
                         }
                     )
                 }
-                val input by vm.input.collectAsStateWithLifecycle()
-                val state by vm.state.collectAsStateWithLifecycle()
                 val loggedIn by vm.loggedIn.collectAsStateWithLifecycle()
-                val queue by vm.queue.collectAsStateWithLifecycle()
-                val message by vm.message.collectAsStateWithLifecycle()
-                val bubbleOn by vm.bubbleOn.collectAsStateWithLifecycle()
-                val undoable by vm.undoable.collectAsStateWithLifecycle()
-                val settings by vm.settings.collectAsStateWithLifecycle()
-                val clipboardLink by vm.clipboardLink.collectAsStateWithLifecycle()
-                val sessionExpired by vm.sessionExpired.collectAsStateWithLifecycle()
-                val cooldown by vm.cooldown.collectAsStateWithLifecycle()
-                val history by vm.history.collectAsStateWithLifecycle()
 
-                BackHandler(enabled = screen != Screen.HOME && screen != Screen.WELCOME) {
-                    screen = if (loggedIn || screen != Screen.LOGIN) Screen.HOME else Screen.WELCOME
+                BackHandler(enabled = screen == Screen.LOGIN) {
+                    screen = if (loggedIn) Screen.MAIN else Screen.WELCOME
                 }
-                when (screen) {
-                    Screen.WELCOME -> WelcomeScreen(
-                        onLogin = { screen = Screen.LOGIN },
-                        onSkip = { screen = Screen.HOME },
-                    )
-                    Screen.HOME -> HomeScreen(
-                        input = input, state = state, loggedIn = loggedIn, queue = queue, message = message,
-                        bubbleOn = bubbleOn,
-                        onToggleBubble = { on ->
-                            // Drawing over other apps is a special permission: send the user to
-                            // the system screen when it has not been granted yet.
-                            if (!vm.toggleBubble(on)) {
-                                startActivity(com.luqman.luckysaver.overlay.BubbleService.overlaySettingsIntent(this))
-                            }
-                        },
-                        onInput = vm::onInput, onResolve = vm::resolve, onToggle = vm::toggle,
-                        onSelectAll = vm::selectAll, onDownload = vm::downloadSelected,
-                        onLogin = { screen = Screen.LOGIN }, onLogout = vm::logout,
-                        onHistory = { screen = Screen.HISTORY }, onClearFailed = vm::clearFailed,
-                        onSettings = { screen = Screen.SETTINGS },
-                        onUndo = if (undoable.isNotEmpty()) vm::undoLastBatch else null,
-                        sessionExpired = sessionExpired,
-                        cooldown = cooldown,
-                        clipboardLink = clipboardLink,
-                        onUseClipboard = vm::useClipboardLink,
-                        onDismissClipboard = vm::dismissClipboard,
-                        onMessageShown = vm::consumeMessage,
-                    )
-                    Screen.LOGIN -> LoginScreen(
-                        onDone = {
-                            vm.onLoggedIn()
-                            screen = if (vm.loggedIn.value) Screen.HOME else Screen.WELCOME
-                        },
-                    )
-                    Screen.HISTORY -> HistoryScreen(history, onBack = { screen = Screen.HOME }, onForget = vm::forget)
-                    Screen.SETTINGS -> SettingsScreen(
-                        settings = settings,
-                        onChange = vm::updateSettings,
-                        onBack = { screen = Screen.HOME },
-                        onOpenWatchlist = { screen = Screen.WATCHLIST },
-                    )
-                    Screen.WATCHLIST -> {
-                        val accounts by vm.watched.collectAsStateWithLifecycle()
-                        val adding by vm.addingAccount.collectAsStateWithLifecycle()
-                        val watchError by vm.watchError.collectAsStateWithLifecycle()
-                        WatchlistScreen(
-                            accounts = accounts,
-                            enabled = settings.storyWatchEnabled,
-                            intervalHours = settings.storyIntervalHours,
-                            adding = adding,
-                            error = watchError,
-                            batteryUnrestricted = isIgnoringBatteryOptimizations(),
-                            onBack = { screen = Screen.SETTINGS },
-                            onAdd = vm::addWatchedAccount,
-                            onRemove = vm::removeWatchedAccount,
-                            onToggleAccount = vm::setAccountEnabled,
-                            onToggleWatching = vm::setStoryWatching,
-                            onIntervalChange = vm::setStoryInterval,
-                            onCheckNow = vm::checkStoriesNow,
-                            onFixBattery = ::requestBatteryExemption,
-                        )
+                Surface(color = MaterialTheme.colorScheme.background) {
+                    AnimatedContent(
+                        targetState = screen,
+                        transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(120)) },
+                        label = "root",
+                    ) { s ->
+                        when (s) {
+                            Screen.WELCOME -> WelcomeScreen(
+                                onLogin = { screen = Screen.LOGIN },
+                                onSkip = { screen = Screen.MAIN },
+                            )
+                            Screen.LOGIN -> LoginScreen(
+                                onDone = {
+                                    vm.onLoggedIn()
+                                    screen = if (vm.loggedIn.value) Screen.MAIN else Screen.WELCOME
+                                },
+                            )
+                            Screen.MAIN -> AppShell(
+                                main = vm,
+                                library = library,
+                                stories = stories,
+                                batteryRestricted = !isIgnoringBatteryOptimizations(),
+                                onLogin = { screen = Screen.LOGIN },
+                                onBubble = { on ->
+                                    // Drawing over other apps is a special permission: send the user to
+                                    // the system screen when it has not been granted yet.
+                                    if (!vm.toggleBubble(on)) {
+                                        startActivity(com.luqman.luckysaver.overlay.BubbleService.overlaySettingsIntent(this@MainActivity))
+                                    }
+                                },
+                                onFixBattery = ::requestBatteryExemption,
+                            )
+                        }
                     }
                 }
             }

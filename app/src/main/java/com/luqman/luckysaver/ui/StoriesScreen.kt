@@ -165,9 +165,22 @@ fun StoriesScreen(
                     when {
                         sections == null -> skeleton(aspect = 9f / 16f, count = 6)
                         sections.isEmpty() -> fullWidth("no-stories") {
+                            val account = onlyOwner?.let { byName[it.lowercase()] }
                             EmptyState(
-                                title = if (onlyOwner != null) "Nothing from @$onlyOwner yet" else "No stories saved yet",
-                                body = "New stories are saved on the next check. Tap refresh to check now.",
+                                title = when {
+                                    status == WatchStatus.Checking -> "Checking for stories"
+                                    onlyOwner != null -> "No stories saved from @$onlyOwner"
+                                    else -> "No stories saved yet"
+                                },
+                                body = when {
+                                    status == WatchStatus.Checking -> "Anything posted in the last 24 hours is being saved now."
+                                    account != null && account.lastCheckedAt == 0L ->
+                                        "@${account.username} hasn't been checked yet. Tap refresh to save its current stories."
+                                    account != null ->
+                                        "At the last check, ${When.savedPhrase(context, account.lastCheckedAt).removePrefix("Saved ")}, " +
+                                            "@${account.username} had no stories your account can see."
+                                    else -> "New stories are saved at each check. Tap refresh to check now."
+                                },
                             )
                         }
                         else -> {

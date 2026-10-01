@@ -94,6 +94,9 @@ class StoriesViewModel(application: Application) : AndroidViewModel(application)
                 )
                 // The first account is the moment watching starts to mean something.
                 if (!app.settings.current.storyWatchEnabled) setWatching(true)
+                // Its current stories are why it was added; waiting for the next scheduled check
+                // could lose some. One batched request, spaced by the same throttle as the lookup.
+                checkNow()
                 _added.value = user.username
             } catch (e: ResolveException) {
                 _addError.value = e.message

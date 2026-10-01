@@ -49,6 +49,9 @@ class StoryWatchWorker(context: Context, params: WorkerParameters) : CoroutineWo
             result.avatars.forEach { (id, url) -> app.db.watched().updateAvatar(id, url) }
             val alreadySaved = app.db.downloads().existingKeys(items.map { it.key }).toSet()
             val fresh = items.filter { it.key !in alreadySaved }
+            // Earlier builds could file a story under the wrong account; while it's still live,
+            // the check knows the right one, so set it straight at no extra cost.
+            items.filter { it.key in alreadySaved }.forEach { app.db.downloads().correctOwner(it.key, it.owner) }
 
             DownloadWorker.enqueueAll(applicationContext, fresh, silent = true, fromWatchlist = true)
 

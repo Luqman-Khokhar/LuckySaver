@@ -58,4 +58,18 @@ class IgJsonTest {
         assertEquals(1, nodes.size)
         assertEquals("z", IgJson.parseMedia(nodes[0]).single().owner)
     }
+
+    /** Story items can carry a "user" holding only an id; the reel's owner must still win. */
+    @Test fun reelsOwnerBeatsNamelessItemUser() {
+        val item = { pk: String, owner: String ->
+            """{"pk":"$pk","media_type":1,"user":{"pk":"$owner"},"image_versions2":{"candidates":[{"url":"i","width":1,"height":1}]}}"""
+        }
+        val json = JSONObject(
+            """{"reels":{
+                "1":{"user":{"pk":"1","username":"first"},"items":[${item("10", "1")}]},
+                "2":{"user":{"pk":"2","username":"second"},"items":[${item("20", "2")}]}}}"""
+        )
+        val owners = IgJson.parseReels(json).flatMap { IgJson.parseMedia(it) }.associate { it.key to it.owner }
+        assertEquals(mapOf("10_0" to "first", "20_0" to "second"), owners)
+    }
 }

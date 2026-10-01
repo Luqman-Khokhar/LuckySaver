@@ -84,10 +84,21 @@ class ApiResolver(
         return IgJson.parseReels(root).flatMap { IgJson.parseMedia(it, preferSmaller()) }
     }
 
-    /** Resolves a username to the numeric id, which is what the watchlist stores. */
+    /**
+     * Resolves a username to the numeric id, which is what the watchlist stores. Goes through
+     * search rather than web_profile_info: Instagram answers the latter with a 429 page for
+     * logged-in sessions even on a first request, while search is what its own web client uses.
+     */
     suspend fun lookupUser(username: String): Pair<String, String> {
-        val user = userInfo(username.removePrefix("@").trim())
-        return user.getString("id") to user.optString("username").ifEmpty { username }
+        val name = username.removePrefix("@").trim()
+        val users = getJson(endpoints().userSearchPath(name)).optJSONArray("users") ?: JSONArray()
+        val user = (0 until users.length())
+            .mapNotNull { users.optJSONObject(it)?.optJSONObject("user") }
+            .firstOrNull { it.optString("username").equals(name, ignoreCase = true) }
+            ?: throw ResolveException("There is no account called @$name", FailureKind.NOT_FOUND)
+        val id = user.optString("pk").ifEmpty { user.optString("pk_id") }.ifEmpty { user.optString("id") }
+        if (id.isEmpty()) throw ResolveException("Instagram didn't say which account that is", FailureKind.UNREADABLE)
+        return id to user.optString("username").ifEmpty { name }
     }
 
     private suspend fun userInfo(username: String): JSONObject =

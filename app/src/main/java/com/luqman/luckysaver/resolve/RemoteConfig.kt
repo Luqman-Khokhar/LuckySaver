@@ -19,12 +19,14 @@ data class IgEndpoints(
     val userAgent: String = IgSession.DESKTOP_UA,
     val mediaInfo: String = "/api/v1/media/{id}/info/",
     val userInfo: String = "/api/v1/users/web_profile_info/?username={username}",
+    val userSearch: String = "/web/search/topsearch/?context=blended&query={username}",
     val reels: String = "/api/v1/feed/reels_media/?reel_ids={ids}",
     val embed: String = "/p/{code}/embed/captioned/",
     val minRequestIntervalMs: Long = 2_000,
 ) {
     fun mediaInfoPath(id: String) = mediaInfo.replace("{id}", id)
     fun userInfoPath(username: String) = userInfo.replace("{username}", username)
+    fun userSearchPath(username: String) = userSearch.replace("{username}", username)
     fun reelsPath(ids: String) = reels.replace("{ids}", ids)
     fun embedPath(code: String) = embed.replace("{code}", code)
 }
@@ -63,6 +65,7 @@ class RemoteConfig(private val context: Context, private val http: OkHttpClient)
             userAgent = str("userAgent", fallback.userAgent),
             mediaInfo = str("mediaInfo", fallback.mediaInfo),
             userInfo = str("userInfo", fallback.userInfo),
+            userSearch = str("userSearch", fallback.userSearch),
             reels = str("reels", fallback.reels),
             embed = str("embed", fallback.embed),
             minRequestIntervalMs = json.optLong("minRequestIntervalMs", fallback.minRequestIntervalMs)

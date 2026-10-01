@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -43,11 +44,13 @@ class StoryWatchWorker(context: Context, params: WorkerParameters) : CoroutineWo
         if (!inputData.getBoolean(KEY_MANUAL, false)) delay(Random.nextLong(0, MAX_JITTER_MS))
 
         return try {
-            val items = app.resolver.storiesFor(accounts.map { it.userId })
+            val result = app.resolver.storiesFor(accounts.map { it.userId })
+            val items = result.items
+            result.avatars.forEach { (id, url) -> app.db.watched().updateAvatar(id, url) }
             val alreadySaved = app.db.downloads().existingKeys(items.map { it.key }).toSet()
             val fresh = items.filter { it.key !in alreadySaved }
 
-            DownloadWorker.enqueueAll(applicationContext, fresh, silent = true)
+            DownloadWorker.enqueueAll(applicationContext, fresh, silent = true, fromWatchlist = true)
 
             val now = System.currentTimeMillis()
             val perAccount = fresh.groupingBy { it.owner.lowercase() }.eachCount()
@@ -79,6 +82,7 @@ class StoryWatchWorker(context: Context, params: WorkerParameters) : CoroutineWo
 
     companion object {
         const val WORK_NAME = "story-watch"
+        const val MANUAL_WORK_NAME = "story-watch-now"
         private const val KEY_MANUAL = "manual"
         private const val MAX_JITTER_MS = 4 * 60 * 1000L
 
@@ -101,7 +105,8 @@ class StoryWatchWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setInputData(androidx.work.workDataOf(KEY_MANUAL to true))
                 .build()
-            WorkManager.getInstance(context).enqueue(request)
+            // Unique, so tapping refresh twice can't send two requests to Instagram.
+            WorkManager.getInstance(context).enqueueUniqueWork(MANUAL_WORK_NAME, ExistingWorkPolicy.KEEP, request)
         }
 
         fun cancel(context: Context) {

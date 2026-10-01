@@ -15,6 +15,8 @@ data class MediaItem(
     /** Epoch seconds. */
     val takenAt: Long,
     val caption: String?,
+    /** From a story or highlight rather than the feed. */
+    val isStory: Boolean = false,
 ) {
     val extension: String get() = if (kind == MediaKind.VIDEO) "mp4" else "jpg"
     val mimeType: String get() = if (kind == MediaKind.VIDEO) "video/mp4" else "image/jpeg"

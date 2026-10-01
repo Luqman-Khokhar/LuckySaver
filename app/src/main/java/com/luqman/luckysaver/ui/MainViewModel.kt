@@ -9,10 +9,7 @@ import com.luqman.luckysaver.App
 import com.luqman.luckysaver.core.IgLinkParser
 import com.luqman.luckysaver.core.MediaItem
 import com.luqman.luckysaver.core.ResolveException
-import com.luqman.luckysaver.data.DownloadEntity
 import com.luqman.luckysaver.data.Settings
-import com.luqman.luckysaver.data.WatchedAccount
-import com.luqman.luckysaver.download.StoryWatchWorker
 import com.luqman.luckysaver.download.DownloadNotifications
 import com.luqman.luckysaver.download.DownloadWorker
 import com.luqman.luckysaver.overlay.BubbleService
@@ -32,7 +29,15 @@ sealed interface ResolveState {
     data class Ready(val items: List<MediaItem>, val selected: Set<String>, val alreadySaved: Set<String>) : ResolveState
 }
 
-data class QueueStatus(val running: Int, val queued: Int, val failed: List<String>)
+data class QueueStatus(
+    val running: Int,
+    val queued: Int,
+    val failed: List<String>,
+    /** 0..1 across running downloads, or null while none reports a size yet. */
+    val progress: Float? = null,
+) {
+    val active: Int get() = running + queued
+}
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as App
@@ -68,8 +73,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
-    val history: StateFlow<List<DownloadEntity>?> = app.db.downloads().observeAll()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    private val _sheetOpen = MutableStateFlow(false)
+    /** The download sheet over Saved; it replaces the old home screen. */
+    val sheetOpen: StateFlow<Boolean> = _sheetOpen.asStateFlow()
 
     val queue: StateFlow<QueueStatus> = workManager.getWorkInfosByTagFlow(DownloadWorker.TAG)
         .map { infos ->
@@ -78,11 +84,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 queued = infos.count { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED },
                 failed = infos.filter { it.state == WorkInfo.State.FAILED }
                     .mapNotNull { it.outputData.getString(DownloadWorker.K_ERROR) },
+                progress = infos.filter { it.state == WorkInfo.State.RUNNING }
+                    .map { it.progress.getInt(DownloadWorker.K_PROGRESS, -1) }
+                    .filter { it >= 0 }
+                    .takeIf { it.isNotEmpty() }
+                    ?.average()?.toFloat()?.div(100f),
             )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), QueueStatus(0, 0, emptyList()))
 
-    fun onInput(text: String) { _input.value = text }
+    /**
+     * A pasted link is fetched straight away. Typing is not: a half-typed link can already look
+     * valid, and fetching it would spend a request on the wrong post.
+     */
+    fun onInput(text: String) {
+        val pasted = text.length - _input.value.length >= PASTE_MIN_CHARS
+        _input.value = text
+        if (pasted && IgLinkParser.parse(text.trim()) != null) resolve()
+        else if (_state.value is ResolveState.Error) _state.value = ResolveState.Idle
+    }
+
+    /** Opens the sheet; a fresh Instagram link in the clipboard is used without asking. */
+    fun openSheet() {
+        _sheetOpen.value = true
+        val link = _clipboardLink.value
+        if (link != null) useClipboardLink()
+    }
+
+    /** Closing keeps a finished result out of the next opening. */
+    fun closeSheet() {
+        _sheetOpen.value = false
+        if (_state.value !is ResolveState.Loading) {
+            _state.value = ResolveState.Idle
+            _input.value = ""
+        }
+    }
 
     /**
      * Called when the app comes to the front: an Instagram link sitting in the clipboard is
@@ -108,6 +144,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val link = _clipboardLink.value ?: return
         dismissedLink = link
         _clipboardLink.value = null
+        _sheetOpen.value = true
         _input.value = link
         resolve()
     }
@@ -145,6 +182,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Called for ACTION_SEND shares: fill the box and resolve immediately. */
     fun onShared(text: String) {
+        _sheetOpen.value = true
         _input.value = text
         resolve()
     }
@@ -165,7 +203,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Nothing to choose between on a single-item post, so don't make the user choose.
                 if (app.settings.current.autoDownload && fresh.size == 1) {
                     _undoable.value = DownloadWorker.enqueueAll(getApplication(), fresh)
-                    _message.value = "Downloading"
+                    _message.value = "Downloading 1 item"
+                    _sheetOpen.value = false
+                    _input.value = ""
                     ResolveState.Ready(items, selected = emptySet(), alreadySaved = saved + fresh.map { it.key })
                 } else {
                     ResolveState.Ready(items, selected = fresh.map { it.key }.toSet(), alreadySaved = saved)
@@ -192,9 +232,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun downloadSelected() {
         val s = _state.value as? ResolveState.Ready ?: return
         val picked = s.items.filter { it.key in s.selected }
+        if (picked.isEmpty()) return
         _undoable.value = DownloadWorker.enqueueAll(getApplication(), picked)
-        _message.value = "Queued ${picked.size} file${if (picked.size == 1) "" else "s"}"
-        _state.value = s.copy(selected = emptySet(), alreadySaved = s.alreadySaved + picked.map { it.key })
+        _message.value = "Downloading ${picked.size} item${if (picked.size == 1) "" else "s"}"
+        _sheetOpen.value = false
+        _input.value = ""
+        _state.value = ResolveState.Idle
     }
 
     fun clearFailed() { workManager.pruneWork() }
@@ -208,84 +251,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateSettings(block: (Settings) -> Settings) = app.settings.update(block)
 
-    // ---- story watchlist ----
-
-    val watched: StateFlow<List<WatchedAccount>> = app.db.watched().observeAll()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    private val _addingAccount = MutableStateFlow(false)
-    val addingAccount: StateFlow<Boolean> = _addingAccount.asStateFlow()
-
-    private val _watchError = MutableStateFlow<String?>(null)
-    val watchError: StateFlow<String?> = _watchError.asStateFlow()
-
-    /** Resolves the username to an id up front, so scheduled checks never look one up. */
-    fun addWatchedAccount(username: String) {
-        val name = username.removePrefix("@").trim()
-        if (name.isBlank() || _addingAccount.value) return
-        if (watched.value.size >= MAX_WATCHED) {
-            _watchError.value = "Watching more than $MAX_WATCHED accounts is asking for trouble"
-            return
-        }
-        _addingAccount.value = true
-        _watchError.value = null
-        viewModelScope.launch {
-            try {
-                val (userId, resolved) = app.resolver.lookupUser(name)
-                app.db.watched().upsert(
-                    WatchedAccount(
-                        userId = userId,
-                        username = resolved,
-                        addedAt = System.currentTimeMillis(),
-                    )
-                )
-                _message.value = "Watching @$resolved"
-            } catch (e: ResolveException) {
-                _watchError.value = e.message
-            } catch (e: Exception) {
-                _watchError.value = e.message ?: "Couldn't add that account"
-            } finally {
-                _addingAccount.value = false
-            }
-        }
-    }
-
-    fun removeWatchedAccount(account: WatchedAccount) {
-        viewModelScope.launch { app.db.watched().delete(account.userId) }
-    }
-
-    fun setAccountEnabled(account: WatchedAccount, enabled: Boolean) {
-        viewModelScope.launch { app.db.watched().setEnabled(account.userId, enabled) }
-    }
-
-    fun setStoryWatching(on: Boolean) {
-        app.settings.update { it.copy(storyWatchEnabled = on) }
-        if (on) {
-            StoryWatchWorker.schedule(getApplication(), app.settings.current.storyIntervalHours)
-        } else {
-            StoryWatchWorker.cancel(getApplication())
-        }
-    }
-
-    fun setStoryInterval(hours: Int) {
-        app.settings.update { it.copy(storyIntervalHours = hours) }
-        if (app.settings.current.storyWatchEnabled) {
-            StoryWatchWorker.schedule(getApplication(), hours)
-        }
-    }
-
-    fun checkStoriesNow() {
-        StoryWatchWorker.runOnce(getApplication())
-        _message.value = "Checking for new stories"
-    }
-
     private companion object {
-        const val MAX_WATCHED = 10
-    }
-
-    /** Drop history rows whose file the user deleted from the gallery. */
-    fun forget(entity: DownloadEntity) {
-        viewModelScope.launch { app.db.downloads().delete(entity.key) }
+        /** Longer than any single keystroke burst, shorter than the shortest Instagram link. */
+        const val PASTE_MIN_CHARS = 12
     }
 
 }

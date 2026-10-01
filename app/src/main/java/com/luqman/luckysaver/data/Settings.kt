@@ -21,7 +21,20 @@ data class Settings(
     val skipDuplicates: Boolean = true,
     val storyWatchEnabled: Boolean = false,
     val storyIntervalHours: Int = 4,
+    val palette: Palette = Palette.JADE,
+    val darkMode: DarkMode = DarkMode.SYSTEM,
 )
+
+enum class Palette(val label: String) {
+    JADE("LuckySaver jade"),
+    WALLPAPER("Wallpaper colors"),
+}
+
+enum class DarkMode(val label: String) {
+    SYSTEM("Follow system"),
+    LIGHT("Light"),
+    DARK("Dark"),
+}
 
 /** Checks per day at each interval, used to explain the risk in the picker. */
 enum class WatchInterval(val hours: Int, val label: String, val risk: String) {
@@ -56,6 +69,10 @@ class SettingsStore(context: Context) {
         skipDuplicates = prefs.getBoolean(KEY_SKIP_DUPES, true),
         storyWatchEnabled = prefs.getBoolean(KEY_WATCH, false),
         storyIntervalHours = prefs.getInt(KEY_WATCH_HOURS, 4),
+        palette = runCatching { Palette.valueOf(prefs.getString(KEY_PALETTE, null) ?: "JADE") }
+            .getOrDefault(Palette.JADE),
+        darkMode = runCatching { DarkMode.valueOf(prefs.getString(KEY_DARK, null) ?: "SYSTEM") }
+            .getOrDefault(DarkMode.SYSTEM),
     )
 
     fun update(block: (Settings) -> Settings) {
@@ -69,6 +86,8 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_SKIP_DUPES, next.skipDuplicates)
             .putBoolean(KEY_WATCH, next.storyWatchEnabled)
             .putInt(KEY_WATCH_HOURS, next.storyIntervalHours)
+            .putString(KEY_PALETTE, next.palette.name)
+            .putString(KEY_DARK, next.darkMode.name)
             .apply()
         _state.value = read()
     }
@@ -82,6 +101,8 @@ class SettingsStore(context: Context) {
         private const val KEY_SKIP_DUPES = "skip_duplicates"
         private const val KEY_WATCH = "story_watch"
         private const val KEY_WATCH_HOURS = "story_watch_hours"
+        private const val KEY_PALETTE = "palette"
+        private const val KEY_DARK = "dark_mode"
 
         /** MediaStore rejects path separators and leading dots in a relative path segment. */
         fun sanitizeFolder(raw: String): String =

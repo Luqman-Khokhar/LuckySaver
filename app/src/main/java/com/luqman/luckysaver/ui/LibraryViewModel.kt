@@ -29,6 +29,11 @@ enum class LibraryFilter(val label: String) { ALL("All"), PHOTOS("Photos"), VIDE
 
 data class DaySection(val day: LocalDate, val items: List<DownloadEntity>)
 
+/** One watched account's saved stories, newest first. [latest] orders the sections. */
+data class AccountSection(val owner: String, val items: List<DownloadEntity>) {
+    val latest: Long get() = items.first().savedAt
+}
+
 data class LibraryState(
     val sections: List<DaySection>,
     val shown: Int,
@@ -69,8 +74,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    val stories: StateFlow<List<DaySection>?> =
-        app.db.downloads().observeWatchlist().map { group(it) }
+    /** By account, the account with the newest story first; the query already sorts newest first. */
+    val stories: StateFlow<List<AccountSection>?> =
+        app.db.downloads().observeWatchlist()
+            .map { list -> list.groupBy { it.owner.lowercase() }.values.map { AccountSection(it.first().owner, it) } }
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 

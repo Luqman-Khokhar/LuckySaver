@@ -68,7 +68,7 @@ import com.luqman.luckysaver.data.WatchedAccount
 @Composable
 fun StoriesScreen(
     accounts: List<WatchedAccount>?,
-    stories: List<DaySection>?,
+    stories: List<AccountSection>?,
     status: WatchStatus,
     newSince: Long,
     batteryRestricted: Boolean,
@@ -161,10 +161,7 @@ fun StoriesScreen(
                             onRemove = onRemove,
                         )
                     }
-                    val sections = stories?.mapNotNull { s ->
-                        val items = s.items.filter { onlyOwner == null || it.owner.equals(onlyOwner, ignoreCase = true) }
-                        if (items.isEmpty()) null else s.copy(items = items)
-                    }
+                    val sections = stories?.filter { onlyOwner == null || it.owner.equals(onlyOwner, ignoreCase = true) }
                     when {
                         sections == null -> skeleton(aspect = 9f / 16f, count = 6)
                         sections.isEmpty() -> fullWidth("no-stories") {
@@ -174,29 +171,26 @@ fun StoriesScreen(
                             )
                         }
                         else -> {
-                            // Viewer order: one account's stories together, oldest first, like Instagram.
+                            // The viewer plays in the order shown: account by account, newest first.
                             val playlist = sections.flatMap { it.items }
-                                .groupBy { it.owner.lowercase() }.values
-                                .flatMap { group -> group.sortedBy { it.savedAt } }
                             sections.forEach { section ->
-                                fullWidth("h-${section.day}") {
-                                    DayHeader(When.dayLabel(section.day), "${section.items.size} saved", Modifier.animateItem())
+                                val account = byName[section.owner.lowercase()]
+                                fullWidth("h-${section.owner.lowercase()}") {
+                                    AccountHeader(
+                                        section = section,
+                                        avatarUrl = account?.avatarUrl,
+                                        hasNew = section.latest > newSince,
+                                        modifier = Modifier.animateItem(),
+                                    )
                                 }
                                 items(section.items, key = { it.key }, contentType = { "story" }) { e ->
-                                    val account = byName[e.owner.lowercase()]
                                     MediaTile(
                                         entity = e,
                                         isNew = e.savedAt > newSince,
                                         aspect = 9f / 16f,
                                         onClick = { onOpen(e, playlist) },
                                         modifier = Modifier.animateItem(),
-                                        topStart = {
-                                            Avatar(
-                                                account?.avatarUrl, e.owner, 20.dp,
-                                                Modifier.size(20.dp).border(1.5.dp, Color.White, CircleShape),
-                                            )
-                                        },
-                                        bottomStartText = When.time(context, e.savedAt),
+                                        bottomStartText = When.stamp(context, e.savedAt),
                                     )
                                 }
                             }
@@ -204,6 +198,33 @@ fun StoriesScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+/** Starts one account's stories: who, how many, and when the newest arrived. */
+@Composable
+private fun AccountHeader(section: AccountSection, avatarUrl: String?, hasNew: Boolean, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    Row(
+        modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            Modifier
+                .size(40.dp)
+                .border(2.dp, if (hasNew) LocalAccents.current.fresh else Color.Transparent, CircleShape)
+                .padding(3.dp),
+        ) { Avatar(avatarUrl, section.owner, 34.dp, Modifier.fillMaxSize()) }
+        Column(Modifier.weight(1f)) {
+            Text(section.owner, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "${section.items.size} ${if (section.items.size == 1) "story" else "stories"} · latest " +
+                    When.savedPhrase(context, section.latest).removePrefix("Saved ").replaceFirstChar { it.lowercase() },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -259,7 +280,7 @@ private fun StatusLine(
 @Composable
 private fun AccountTray(
     accounts: List<WatchedAccount>,
-    stories: List<DaySection>,
+    stories: List<AccountSection>,
     newSince: Long,
     selected: String?,
     onSelect: (String) -> Unit,

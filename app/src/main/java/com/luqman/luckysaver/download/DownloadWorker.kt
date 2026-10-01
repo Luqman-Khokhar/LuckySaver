@@ -104,6 +104,9 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                         uri = uri.toString(),
                         fileName = fileName,
                         savedAt = System.currentTimeMillis(),
+                        fromWatchlist = inputData.getBoolean(K_WATCHLIST, false),
+                        isStory = inputData.getBoolean(K_STORY, false),
+                        takenAt = inputData.getLong(K_TAKEN, 0) * 1000,
                     )
                 )
                 Result.success()
@@ -188,6 +191,8 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         const val K_OWNER = "owner"
         const val K_CODE = "code"
         const val K_TAKEN = "taken"
+        const val K_WATCHLIST = "watchlist"
+        const val K_STORY = "story"
         const val K_PROGRESS = "progress"
         const val K_ERROR = "error"
         private const val CHANNEL = "downloads"
@@ -203,14 +208,15 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
             context: Context,
             items: List<MediaItem>,
             silent: Boolean = false,
+            fromWatchlist: Boolean = false,
         ): List<java.util.UUID> {
             if (items.isEmpty()) return emptyList()
-            val ids = items.map { enqueue(context, it) }
+            val ids = items.map { enqueue(context, it, fromWatchlist) }
             if (!silent) DownloadNotifications.started(context, items.size)
             return ids
         }
 
-        fun enqueue(context: Context, item: MediaItem): java.util.UUID {
+        fun enqueue(context: Context, item: MediaItem, fromWatchlist: Boolean = false): java.util.UUID {
             val settings = (context.applicationContext as App).settings.current
             val request = OneTimeWorkRequestBuilder<DownloadWorker>()
                 .setInputData(
@@ -222,6 +228,8 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                         K_OWNER to item.owner,
                         K_CODE to item.shortcode,
                         K_TAKEN to item.takenAt,
+                        K_WATCHLIST to fromWatchlist,
+                        K_STORY to (item.isStory || fromWatchlist),
                     )
                 )
                 .setConstraints(

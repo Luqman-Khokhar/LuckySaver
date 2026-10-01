@@ -49,14 +49,14 @@ class ApiResolver(
                 FailureKind.PRIVATE_ACCOUNT,
             )
             val picked = link.storyPk?.let { pk -> nodes.filter { it.optString("pk") == pk }.ifEmpty { nodes } } ?: nodes
-            picked.flatMap { IgJson.parseMedia(it, preferSmaller()) }
+            picked.flatMap { IgJson.parseMedia(it, preferSmaller()) }.map { it.copy(isStory = true) }
         }
         is IgLink.Highlight -> {
             val nodes = IgJson.parseReels(getJson(endpoints().reelsPath("highlight:${link.highlightId}")))
             if (nodes.isEmpty()) throw ResolveException(
                 "That highlight is empty or not visible to you", FailureKind.PRIVATE_ACCOUNT,
             )
-            nodes.flatMap { IgJson.parseMedia(it, preferSmaller()) }
+            nodes.flatMap { IgJson.parseMedia(it, preferSmaller()) }.map { it.copy(isStory = true) }
         }
         is IgLink.Profile -> {
             val user = userInfo(link.username)
@@ -78,10 +78,21 @@ class ApiResolver(
      * so watching ten accounts costs one request rather than ten — which matters a great deal
      * when this runs on a timer.
      */
-    suspend fun storiesFor(userIds: List<String>): List<MediaItem> {
-        if (userIds.isEmpty()) return emptyList()
+    suspend fun storiesFor(userIds: List<String>): StoriesResult {
+        if (userIds.isEmpty()) return StoriesResult(emptyList(), emptyMap())
         val root = getJson(endpoints().reelsPath(userIds.joinToString(",")))
-        return IgJson.parseReels(root).flatMap { IgJson.parseMedia(it, preferSmaller()) }
+        val nodes = IgJson.parseReels(root)
+        // Each reel carries its owner's current picture, so avatars stay fresh at no extra cost.
+        val avatars = nodes.mapNotNull { n ->
+            val user = n.optJSONObject("user") ?: return@mapNotNull null
+            val id = user.optString("pk").ifEmpty { user.optString("id") }
+            val pic = user.optString("profile_pic_url")
+            if (id.isEmpty() || pic.isEmpty()) null else id to pic
+        }.toMap()
+        return StoriesResult(
+            items = nodes.flatMap { IgJson.parseMedia(it, preferSmaller()) }.map { it.copy(isStory = true) },
+            avatars = avatars,
+        )
     }
 
     /**
@@ -89,7 +100,7 @@ class ApiResolver(
      * search rather than web_profile_info: Instagram answers the latter with a 429 page for
      * logged-in sessions even on a first request, while search is what its own web client uses.
      */
-    suspend fun lookupUser(username: String): Pair<String, String> {
+    suspend fun lookupUser(username: String): LookedUpUser {
         val name = username.removePrefix("@").trim()
         val users = getJson(endpoints().userSearchPath(name)).optJSONArray("users") ?: JSONArray()
         val user = (0 until users.length())
@@ -98,7 +109,11 @@ class ApiResolver(
             ?: throw ResolveException("There is no account called @$name", FailureKind.NOT_FOUND)
         val id = user.optString("pk").ifEmpty { user.optString("pk_id") }.ifEmpty { user.optString("id") }
         if (id.isEmpty()) throw ResolveException("Instagram didn't say which account that is", FailureKind.UNREADABLE)
-        return id to user.optString("username").ifEmpty { name }
+        return LookedUpUser(
+            id = id,
+            username = user.optString("username").ifEmpty { name },
+            avatarUrl = user.optString("profile_pic_url").ifEmpty { null },
+        )
     }
 
     private suspend fun userInfo(username: String): JSONObject =
@@ -150,6 +165,10 @@ class ApiResolver(
         }
     }
 }
+
+data class StoriesResult(val items: List<MediaItem>, val avatars: Map<String, String>)
+
+data class LookedUpUser(val id: String, val username: String, val avatarUrl: String?)
 
 /** Anonymous fallback: scrapes the public embed page. Public posts/reels only. */
 class EmbedResolver(
@@ -237,7 +256,7 @@ class ResolverChain(
     fun cooldownRemaining(): String = rateLimiter.describeRemaining()
 
     /** Watchlist check: same throttle and cooldown as everything else on this chain. */
-    suspend fun storiesFor(userIds: List<String>): List<MediaItem> = mutex.withLock {
+    suspend fun storiesFor(userIds: List<String>): StoriesResult = mutex.withLock {
         val resolver = api?.takeIf { it.supports(IgLink.Story("", null)) }
             ?: throw ResolveException("Log in to check stories", FailureKind.SESSION_EXPIRED)
         guardCooldown()
@@ -251,7 +270,7 @@ class ResolverChain(
         }
     }
 
-    suspend fun lookupUser(username: String): Pair<String, String> = mutex.withLock {
+    suspend fun lookupUser(username: String): LookedUpUser = mutex.withLock {
         val resolver = api ?: throw ResolveException("Log in first", FailureKind.SESSION_EXPIRED)
         guardCooldown()
         throttle()

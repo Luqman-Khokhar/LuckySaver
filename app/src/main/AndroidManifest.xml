@@ -14,7 +14,8 @@
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
         android:label="LuckySaver"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:enableOnBackInvokedCallback="true"
+        android:theme="@style/Theme.LuckySaver">
 
         <activity
             android:name=".MainActivity"

@@ -32,7 +32,15 @@ sealed interface ResolveState {
     data class Ready(val items: List<MediaItem>, val selected: Set<String>, val alreadySaved: Set<String>) : ResolveState
 }
 
-data class QueueStatus(val running: Int, val queued: Int, val failed: List<String>)
+data class QueueStatus(
+    val running: Int,
+    val queued: Int,
+    val failed: List<String>,
+    /** 0..1 across running downloads, or null while none reports a size yet. */
+    val progress: Float? = null,
+) {
+    val active: Int get() = running + queued
+}
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as App
@@ -71,6 +79,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val history: StateFlow<List<DownloadEntity>?> = app.db.downloads().observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    private val _sheetOpen = MutableStateFlow(false)
+    /** The download sheet over Saved; it replaces the old home screen. */
+    val sheetOpen: StateFlow<Boolean> = _sheetOpen.asStateFlow()
+
     val queue: StateFlow<QueueStatus> = workManager.getWorkInfosByTagFlow(DownloadWorker.TAG)
         .map { infos ->
             QueueStatus(
@@ -78,11 +90,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 queued = infos.count { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED },
                 failed = infos.filter { it.state == WorkInfo.State.FAILED }
                     .mapNotNull { it.outputData.getString(DownloadWorker.K_ERROR) },
+                progress = infos.filter { it.state == WorkInfo.State.RUNNING }
+                    .map { it.progress.getInt(DownloadWorker.K_PROGRESS, -1) }
+                    .filter { it >= 0 }
+                    .takeIf { it.isNotEmpty() }
+                    ?.average()?.toFloat()?.div(100f),
             )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), QueueStatus(0, 0, emptyList()))
 
-    fun onInput(text: String) { _input.value = text }
+    /**
+     * A pasted link is fetched straight away. Typing is not: a half-typed link can already look
+     * valid, and fetching it would spend a request on the wrong post.
+     */
+    fun onInput(text: String) {
+        val pasted = text.length - _input.value.length >= PASTE_MIN_CHARS
+        _input.value = text
+        if (pasted && IgLinkParser.parse(text.trim()) != null) resolve()
+        else if (_state.value is ResolveState.Error) _state.value = ResolveState.Idle
+    }
+
+    /** Opens the sheet; a fresh Instagram link in the clipboard is used without asking. */
+    fun openSheet() {
+        _sheetOpen.value = true
+        val link = _clipboardLink.value
+        if (link != null) useClipboardLink()
+    }
+
+    /** Closing keeps a finished result out of the next opening. */
+    fun closeSheet() {
+        _sheetOpen.value = false
+        if (_state.value !is ResolveState.Loading) {
+            _state.value = ResolveState.Idle
+            _input.value = ""
+        }
+    }
 
     /**
      * Called when the app comes to the front: an Instagram link sitting in the clipboard is
@@ -108,6 +150,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val link = _clipboardLink.value ?: return
         dismissedLink = link
         _clipboardLink.value = null
+        _sheetOpen.value = true
         _input.value = link
         resolve()
     }
@@ -145,6 +188,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Called for ACTION_SEND shares: fill the box and resolve immediately. */
     fun onShared(text: String) {
+        _sheetOpen.value = true
         _input.value = text
         resolve()
     }
@@ -165,7 +209,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Nothing to choose between on a single-item post, so don't make the user choose.
                 if (app.settings.current.autoDownload && fresh.size == 1) {
                     _undoable.value = DownloadWorker.enqueueAll(getApplication(), fresh)
-                    _message.value = "Downloading"
+                    _message.value = "Downloading 1 item"
+                    _sheetOpen.value = false
+                    _input.value = ""
                     ResolveState.Ready(items, selected = emptySet(), alreadySaved = saved + fresh.map { it.key })
                 } else {
                     ResolveState.Ready(items, selected = fresh.map { it.key }.toSet(), alreadySaved = saved)
@@ -192,9 +238,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun downloadSelected() {
         val s = _state.value as? ResolveState.Ready ?: return
         val picked = s.items.filter { it.key in s.selected }
+        if (picked.isEmpty()) return
         _undoable.value = DownloadWorker.enqueueAll(getApplication(), picked)
-        _message.value = "Queued ${picked.size} file${if (picked.size == 1) "" else "s"}"
-        _state.value = s.copy(selected = emptySet(), alreadySaved = s.alreadySaved + picked.map { it.key })
+        _message.value = "Downloading ${picked.size} item${if (picked.size == 1) "" else "s"}"
+        _sheetOpen.value = false
+        _input.value = ""
+        _state.value = ResolveState.Idle
     }
 
     fun clearFailed() { workManager.pruneWork() }
@@ -281,6 +330,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         const val MAX_WATCHED = 10
+        /** Longer than any single keystroke burst, shorter than the shortest Instagram link. */
+        const val PASTE_MIN_CHARS = 12
     }
 
     /** Drop history rows whose file the user deleted from the gallery. */

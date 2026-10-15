@@ -49,7 +49,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -104,6 +104,9 @@ fun SavedScreen(
     onLogin: () -> Unit,
     onLogout: () -> Unit,
     onClearFailed: () -> Unit,
+    title: String = "Saved",
+    /** Platform sub-tabs drawn under the app bar, above this screen's own filters. */
+    subTabs: @Composable () -> Unit = {},
 ) {
     var searching by rememberSaveable { mutableStateOf(query.isNotEmpty()) }
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
@@ -119,14 +122,16 @@ fun SavedScreen(
             Column {
                 if (searching) SearchBar(query, onQuery) { searching = false; onQuery("") }
                 else TopAppBar(
-                    title = { Text("Saved") },
+                    title = { Text(title) },
                     actions = {
                         IconButton(onClick = { searching = true }) { Icon(Icons.Rounded.Search, "Search by account") }
                         AccountMenu(loggedIn, onLogin, onLogout)
                     },
                     scrollBehavior = scroll,
                 )
-                PrimaryTabRow(
+                subTabs()
+                // Secondary: these filter the shelf picked by the sub-tabs above.
+                SecondaryTabRow(
                     selectedTabIndex = filter.ordinal,
                     containerColor = MaterialTheme.colorScheme.surface,
                 ) {
@@ -269,7 +274,7 @@ private fun AccountMenu(loggedIn: Boolean, onLogin: () -> Unit, onLogout: () -> 
 }
 
 @Composable
-private fun DownloadingRow(queue: QueueStatus) {
+fun DownloadingRow(queue: QueueStatus) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             if (queue.active == 1) "Downloading 1 item" else "Downloading ${queue.active} items",

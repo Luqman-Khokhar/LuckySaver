@@ -1,6 +1,7 @@
 # LuckySaver
 
-Personal Android app for saving Instagram photos, videos, reels, stories and highlights.
+Personal Android app for saving Instagram photos, videos, reels, stories and highlights, and
+WhatsApp statuses.
 
 Native Kotlin and Jetpack Compose. No React Native, no Expo, no backend — everything runs on
 the device.
@@ -12,6 +13,10 @@ the device.
 - Posts, reels, carousels, stories, highlights and profile pictures
 - Downloads run in the background with progress and completion notifications
 - A story watchlist that saves chosen accounts' stories before they expire
+- WhatsApp and WhatsApp Business statuses: a WhatsApp tab lists every status WhatsApp has loaded,
+  to save one by one or all at once. In WhatsApp mode the bubble turns green and a tap shows the
+  newest statuses over WhatsApp. With usage access the mode follows the app on screen; otherwise
+  long-press the bubble to switch
 - Download history with duplicate skipping
 
 Instagram closed its logged-out endpoints, so a login is required even for public posts. The app
@@ -78,10 +83,19 @@ builds fall back to the debug key so a fresh clone still builds.
 | `download` | MediaStore writing, download worker, notifications, story watch worker |
 | `data` | Room database (history, watchlist) and settings |
 | `ui` | Compose screens: welcome, home, login, history, settings, watchlist |
-| `overlay` | Floating bubble service and its custom view |
+| `overlay` | Floating bubble service, its custom view, and the WhatsApp status strip |
+| `whatsapp` | WhatsApp status folder access and copying, foreground app detection |
 
 Files are saved to `Pictures/<album>`, where the album name, file name template, quality,
 Wi-Fi-only downloads and duplicate skipping are all configurable in Settings.
+
+## WhatsApp statuses
+
+No network and no login: WhatsApp already keeps loaded statuses in
+`Android/media/com.whatsapp/WhatsApp/Media/.Statuses` (Business: `com.whatsapp.w4b/WhatsApp Business`).
+The app asks once for read access to that folder through the system picker and copies files to
+`Pictures/<album>/WhatsApp`. Only statuses WhatsApp has loaded are there, and WhatsApp clears them
+after about 24 hours. If WhatsApp is reinstalled the grant is lost and the tab asks again.
 
 ## When it breaks
 

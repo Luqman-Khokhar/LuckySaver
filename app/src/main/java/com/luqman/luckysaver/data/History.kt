@@ -34,12 +34,30 @@ data class DownloadEntity(
      * downloaded again, which matters for stories that are still live when they're deleted.
      */
     @ColumnInfo(defaultValue = "0") val removed: Boolean = false,
+    /** Which app and which shelf: one of [Source]. WhatsApp saves stay [Source.INSTAGRAM], as before. */
+    @ColumnInfo(defaultValue = "0") val source: Int = Source.INSTAGRAM,
+    /** YouTube video title; Instagram has none. */
+    val title: String? = null,
 )
+
+/** [DownloadEntity.source] values. Ints rather than an enum so the column default stays a plain 0. */
+object Source {
+    const val INSTAGRAM = 0
+    const val YT_VIDEO = 1
+    const val YT_SHORT = 2
+    /** Audio saved from YouTube or YouTube Music, whatever the link was. */
+    const val YT_AUDIO = 3
+
+    fun isYouTube(source: Int) = source != INSTAGRAM
+}
 
 @Dao
 interface DownloadDao {
-    @Query("SELECT * FROM downloads WHERE removed = 0 ORDER BY savedAt DESC")
+    @Query("SELECT * FROM downloads WHERE removed = 0 AND source = 0 ORDER BY savedAt DESC")
     fun observeAll(): Flow<List<DownloadEntity>>
+
+    @Query("SELECT * FROM downloads WHERE removed = 0 AND source != 0 ORDER BY savedAt DESC")
+    fun observeYouTube(): Flow<List<DownloadEntity>>
 
     @Query("SELECT * FROM downloads WHERE fromWatchlist = 1 AND removed = 0 ORDER BY savedAt DESC")
     fun observeWatchlist(): Flow<List<DownloadEntity>>
@@ -55,6 +73,13 @@ interface DownloadDao {
 
     @Query("SELECT key FROM downloads WHERE key IN (:keys)")
     suspend fun existingKeys(keys: List<String>): List<String>
+
+    /** WhatsApp statuses still on the phone. A deleted one can be saved again while it's live. */
+    @Query("SELECT key FROM downloads WHERE key LIKE 'wa:%' AND removed = 0")
+    fun observeWhatsAppKeys(): Flow<List<String>>
+
+    @Query("SELECT key FROM downloads WHERE key IN (:keys) AND removed = 0")
+    suspend fun presentKeys(keys: List<String>): List<String>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: DownloadEntity)
@@ -100,7 +125,7 @@ interface WatchedAccountDao {
     suspend fun updateAvatar(userId: String, url: String)
 }
 
-@Database(entities = [DownloadEntity::class, WatchedAccount::class], version = 4, exportSchema = false)
+@Database(entities = [DownloadEntity::class, WatchedAccount::class], version = 5, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun downloads(): DownloadDao
     abstract fun watched(): WatchedAccountDao
@@ -153,9 +178,17 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** YouTube downloads share the table; everything saved before is Instagram (or WhatsApp). */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE downloads ADD COLUMN source INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN title TEXT")
+            }
+        }
+
         fun build(context: Context) =
             Room.databaseBuilder(context, AppDatabase::class.java, "luckysaver.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
     }
 }

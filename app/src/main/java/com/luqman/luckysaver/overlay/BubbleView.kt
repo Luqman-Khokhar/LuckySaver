@@ -10,13 +10,14 @@ import android.graphics.drawable.Drawable
 import android.view.View
 import android.view.animation.LinearInterpolator
 import androidx.core.content.ContextCompat
+import com.luqman.luckysaver.R
 
 /**
  * The floating button: an icon inside a circle, with a ring around the edge that shows download
  * progress. Drawn by hand rather than composed from widgets so the ring can sweep smoothly
  * without a layout pass on every frame.
  */
-class BubbleView(context: Context, iconRes: Int) : View(context) {
+class BubbleView(context: Context, private val iconRes: Int) : View(context) {
 
     sealed interface State {
         data object Idle : State
@@ -31,7 +32,7 @@ class BubbleView(context: Context, iconRes: Int) : View(context) {
 
     private val density = resources.displayMetrics.density
     private val ringWidth = 4f * density
-    private val icon: Drawable? = ContextCompat.getDrawable(context, iconRes)
+    private var icon: Drawable? = ContextCompat.getDrawable(context, iconRes)
     private val ringBounds = RectF()
 
     private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -116,6 +117,34 @@ class BubbleView(context: Context, iconRes: Int) : View(context) {
     private fun stopSpinner() {
         spinner?.cancel()
         spinner = null
+    }
+
+    /**
+     * WhatsApp mode turns the whole bubble WhatsApp green with a status-ring icon, YouTube mode red
+     * with a play icon, so the mode is told by shape as well as colour.
+     */
+    fun setMode(mode: BubbleMode) {
+        bodyPaint.color = when (mode) {
+            BubbleMode.WHATSAPP -> ContextCompat.getColor(context, R.color.whatsapp_green)
+            BubbleMode.YOUTUBE -> ContextCompat.getColor(context, R.color.youtube_red)
+            BubbleMode.INSTAGRAM -> COLOR_BODY
+        }
+        icon = ContextCompat.getDrawable(
+            context,
+            when (mode) {
+                BubbleMode.WHATSAPP -> R.drawable.ic_bubble_whatsapp
+                BubbleMode.YOUTUBE -> R.drawable.ic_bubble_youtube
+                BubbleMode.INSTAGRAM -> iconRes
+            },
+        )
+        contentDescription = context.getString(
+            when (mode) {
+                BubbleMode.WHATSAPP -> R.string.bubble_description_whatsapp
+                BubbleMode.YOUTUBE -> R.string.bubble_description_youtube
+                BubbleMode.INSTAGRAM -> R.string.bubble_description
+            },
+        )
+        invalidate()
     }
 
     fun bounce() {

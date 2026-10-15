@@ -28,7 +28,11 @@ import com.luqman.luckysaver.App
 import com.luqman.luckysaver.MainActivity
 import com.luqman.luckysaver.R
 import com.luqman.luckysaver.core.FailureKind
+import com.luqman.luckysaver.core.WaApp
 import com.luqman.luckysaver.core.IgLinkParser
+import com.luqman.luckysaver.core.YtLink
+import com.luqman.luckysaver.core.YtLinkParser
+import com.luqman.luckysaver.youtube.YtDownloadWorker
 import com.luqman.luckysaver.core.ResolveException
 import com.luqman.luckysaver.download.DownloadNotifications
 import com.luqman.luckysaver.download.DownloadWorker
@@ -43,7 +47,11 @@ import androidx.work.WorkQuery
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.luqman.luckysaver.whatsapp.ForegroundApp
 import kotlin.math.abs
+
+/** What a tap does: save the copied Instagram or YouTube link, or open the WhatsApp status strip. */
+enum class BubbleMode { INSTAGRAM, WHATSAPP, YOUTUBE }
 
 /**
  * Floating download button drawn over other apps, so a link copied in Instagram can be saved
@@ -52,6 +60,11 @@ import kotlin.math.abs
  * Clipboard access is the constraint that shapes this: since Android 10 only the focused app can
  * read the clipboard, so the bubble cannot watch for copies in the background. Tapping it briefly
  * makes the overlay window focusable, which earns one legitimate read.
+ *
+ * In WhatsApp mode the bubble turns green and a tap shows the statuses WhatsApp has loaded. In
+ * YouTube mode it turns red; a copied link of either kind is saved in any mode other than
+ * WhatsApp, the colour only says which app the bubble expects. The mode follows the app on screen
+ * when usage access is granted, and can always be set by hand from the long-press menu.
  */
 class BubbleService : Service() {
 
@@ -62,14 +75,29 @@ class BubbleService : Service() {
     private var menu: LinearLayout? = null
     private var params: WindowManager.LayoutParams? = null
     private var busy = false
+    private var mode = BubbleMode.INSTAGRAM
+    private val foreground by lazy { ForegroundApp(this) }
+    /**
+     * Last app seen on screen. Detection only changes the mode when this changes, so a mode
+     * picked by hand sticks until the user moves to another app.
+     */
+    private var lastForeground: String? = null
+    private var detectJob: Job? = null
+    /** The WhatsApp the user was last in, so Business users land on Business statuses. */
+    private var waApp: WaApp? = null
+    private var panel: StatusPanel? = null
+    private var panelClosedAt = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WindowManager::class.java)
+        mode = savedMode(this)
         startBubbleForeground(serviceNotification())
         addBubble()
+        bubble?.setMode(mode)
+        startDetecting()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -83,6 +111,8 @@ class BubbleService : Service() {
 
     override fun onDestroy() {
         watchJob?.cancel()
+        detectJob?.cancel()
+        panel?.dismiss(notify = false)
         dismissMenu()
         bubble?.let { runCatching { windowManager.removeView(it) } }
         bubble = null
@@ -159,18 +189,29 @@ class BubbleService : Service() {
         }
     }
 
-    private fun onBubbleTapped() {
+    /** [forceAudio] is the long-press "save as audio" for a copied YouTube link. */
+    private fun onBubbleTapped(forceAudio: Boolean = false) {
+        if (mode == BubbleMode.WHATSAPP) {
+            onWhatsAppTapped()
+            return
+        }
         if (busy) return
         busy = true
         scope.launch {
             try {
                 val link = readClipboard()
+                val expected = if (mode == BubbleMode.YOUTUBE) "YouTube" else "Instagram"
                 if (link.isNullOrBlank()) {
-                    fail("Copy an Instagram link first", notify = false)
+                    fail(if (mode == BubbleMode.YOUTUBE) "Copy a YouTube link first" else "Copy an Instagram link first", notify = false)
                     return@launch
                 }
-                if (IgLinkParser.parse(link) == null) {
-                    fail("Clipboard has no Instagram link", notify = false)
+                val yt = YtLinkParser.parse(link)
+                if (yt != null) {
+                    saveYouTube(yt, forceAudio)
+                    return@launch
+                }
+                if (forceAudio || IgLinkParser.parse(link) == null) {
+                    fail("Clipboard has no $expected link", notify = false)
                     return@launch
                 }
                 showWorking()
@@ -201,6 +242,22 @@ class BubbleService : Service() {
         }
     }
 
+    /** YouTube resolves inside the worker, so the bubble only checks for a duplicate and queues. */
+    private suspend fun saveYouTube(link: YtLink, forceAudio: Boolean) {
+        if (mode == BubbleMode.INSTAGRAM) setMode(BubbleMode.YOUTUBE)
+        val app = applicationContext as App
+        val audio = forceAudio || YtDownloadWorker.defaultIsAudio(this, link)
+        val key = YtDownloadWorker.keyFor(link.videoId, audio)
+        if (app.db.downloads().presentKeys(listOf(key)).isNotEmpty()) {
+            succeed("Already saved")
+            return
+        }
+        val id = YtDownloadWorker.enqueueDefault(applicationContext, link, forceAudio)
+        toast(if (audio) "Saving audio" else "Downloading video")
+        bubble?.setState(BubbleView.State.Progress(0f))
+        watchDownloads(listOf(id))
+    }
+
     /**
      * Only the focused window may read the clipboard, so the overlay takes focus for a moment.
      * The short delay lets the window manager actually hand focus over before we read.
@@ -221,6 +278,83 @@ class BubbleService : Service() {
         layout.flags = UNFOCUSED_FLAGS
         runCatching { windowManager.updateViewLayout(view, layout) }
         return text
+    }
+
+    private fun onWhatsAppTapped() {
+        if (panel?.isShowing == true) {
+            panel?.dismiss()
+            return
+        }
+        // Touching the bubble counts as touching outside the strip, which already closed it.
+        if (System.currentTimeMillis() - panelClosedAt < REOPEN_GUARD_MS) return
+        val store = (applicationContext as App).whatsapp
+        store.refreshGrants()
+        val granted = store.granted.value
+        val target = waApp?.takeIf { it in granted } ?: WaApp.entries.firstOrNull { it in granted }
+        if (target == null) {
+            toast("Allow LuckySaver to read ${(waApp ?: WaApp.WHATSAPP).label} statuses first")
+            startActivity(MainActivity.whatsAppIntent(this, waApp))
+            return
+        }
+        showStatuses(target)
+    }
+
+    private fun showStatuses(app: WaApp) {
+        val store = (applicationContext as App).whatsapp
+        bubble?.setState(BubbleView.State.Working)
+        scope.launch {
+            val statuses = runCatching { store.list(app) }.getOrElse {
+                fail("Couldn't read ${app.label} statuses. Open LuckySaver to allow access again.", notify = false)
+                return@launch
+            }
+            val saved = store.savedKeys(statuses)
+            bubble?.setState(BubbleView.State.Idle)
+            val strip = panel ?: StatusPanel(
+                this@BubbleService, windowManager, scope, store,
+                onSaved = { ok, message -> if (ok) succeed(message) else fail(message, notify = false) },
+                onClosed = { panelClosedAt = System.currentTimeMillis() },
+            ).also { panel = it }
+            strip.show(app, WaApp.entries.filter { it in store.granted.value }, statuses, saved) { other ->
+                waApp = other
+                showStatuses(other)
+            }
+        }
+    }
+
+    /**
+     * With usage access, the bubble follows the app on screen: green over WhatsApp, the Instagram
+     * look over Instagram, unchanged over anything else.
+     */
+    private fun startDetecting() {
+        detectJob?.cancel()
+        detectJob = scope.launch {
+            while (true) {
+                val pkg = withContext(Dispatchers.Default) { foreground.current() }
+                if (pkg != null && pkg != lastForeground) {
+                    lastForeground = pkg
+                    val wa = WaApp.ofPackage(pkg)
+                    when {
+                        wa != null -> {
+                            waApp = wa
+                            setMode(BubbleMode.WHATSAPP)
+                        }
+                        pkg == INSTAGRAM_PACKAGE -> setMode(BubbleMode.INSTAGRAM)
+                        pkg in YOUTUBE_PACKAGES -> setMode(BubbleMode.YOUTUBE)
+                    }
+                }
+                delay(if (pkg == null) NO_ACCESS_POLL_MS else DETECT_POLL_MS)
+            }
+        }
+    }
+
+    private fun setMode(next: BubbleMode) {
+        if (next == mode) return
+        mode = next
+        prefs(this).edit().putString(KEY_MODE, next.name).apply()
+        if (next != BubbleMode.WHATSAPP) panel?.dismiss(notify = false)
+        bubble?.setMode(next)
+        if (!busy) bubble?.bounce()
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, serviceNotification())
     }
 
     private fun showWorking() {
@@ -321,6 +455,18 @@ class BubbleService : Service() {
                 onClick()
             }
         }
+        if (mode == BubbleMode.YOUTUBE) container.addView(item("Save copied link as audio") { onBubbleTapped(forceAudio = true) })
+        BubbleMode.entries.filter { it != mode }.forEach { other ->
+            val label = when (other) {
+                BubbleMode.INSTAGRAM -> "Instagram mode"
+                BubbleMode.WHATSAPP -> "WhatsApp mode"
+                BubbleMode.YOUTUBE -> "YouTube mode"
+            }
+            container.addView(item(label) { setMode(other) })
+        }
+        if (!ForegroundApp.hasAccess(this)) container.addView(item("Switch modes automatically") {
+            ForegroundApp.openSettings(this)
+        })
         container.addView(item("Open LuckySaver") {
             startActivity(
                 Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -375,7 +521,13 @@ class BubbleService : Service() {
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle("Floating button is on")
-            .setContentText("Copy an Instagram link, then tap the bubble")
+            .setContentText(
+                when (mode) {
+                    BubbleMode.WHATSAPP -> "WhatsApp mode: watch a status, then tap the bubble"
+                    BubbleMode.YOUTUBE -> "YouTube mode: copy a video or song link, then tap the bubble"
+                    BubbleMode.INSTAGRAM -> "Copy an Instagram link, then tap the bubble"
+                }
+            )
             .setContentIntent(open)
             .addAction(0, "Turn off", stop)
             .setOngoing(true)
@@ -403,6 +555,21 @@ class BubbleService : Service() {
         private const val LONG_PRESS_MS = 600
         private const val FOCUS_SETTLE_MS = 120L
         private const val RESET_DELAY_MS = 2_500L
+        private const val KEY_MODE = "mode"
+        private const val INSTAGRAM_PACKAGE = "com.instagram.android"
+        /** YouTube, YouTube Music, and the common patched builds of both. */
+        private val YOUTUBE_PACKAGES = setOf(
+            "com.google.android.youtube",
+            "com.google.android.apps.youtube.music",
+            "app.revanced.android.youtube",
+            "app.revanced.android.apps.youtube.music",
+            "app.rvx.android.youtube",
+            "app.rvx.android.apps.youtube.music",
+        )
+        private const val DETECT_POLL_MS = 1_000L
+        /** Without usage access there is nothing to detect; only check whether it was granted. */
+        private const val NO_ACCESS_POLL_MS = 5_000L
+        private const val REOPEN_GUARD_MS = 600L
 
         private const val UNFOCUSED_FLAGS = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
@@ -413,6 +580,10 @@ class BubbleService : Service() {
 
         private fun prefs(context: Context): SharedPreferences =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+        private fun savedMode(context: Context): BubbleMode =
+            runCatching { BubbleMode.valueOf(prefs(context).getString(KEY_MODE, null) ?: "") }
+                .getOrDefault(BubbleMode.INSTAGRAM)
 
         fun canDrawOverlay(context: Context): Boolean = Settings.canDrawOverlays(context)
 

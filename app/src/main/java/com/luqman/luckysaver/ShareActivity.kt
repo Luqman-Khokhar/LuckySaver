@@ -5,9 +5,11 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import com.luqman.luckysaver.core.IgLinkParser
+import com.luqman.luckysaver.core.YtLinkParser
 import com.luqman.luckysaver.core.ResolveException
 import com.luqman.luckysaver.download.DownloadNotifications
 import com.luqman.luckysaver.download.DownloadWorker
+import com.luqman.luckysaver.youtube.YtDownloadWorker
 import kotlinx.coroutines.launch
 
 /**
@@ -27,13 +29,30 @@ class ShareActivity : Activity() {
         }
         val app = applicationContext as App
 
-        if (shared.isNullOrBlank() || IgLinkParser.parse(shared) == null) {
-            Toast.makeText(this, "No Instagram link in that share", Toast.LENGTH_SHORT).show()
+        val yt = shared?.let(YtLinkParser::parse)
+        if (shared.isNullOrBlank() || (yt == null && IgLinkParser.parse(shared) == null)) {
+            Toast.makeText(this, "No Instagram or YouTube link in that share", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
         if (!app.settings.current.autoDownload) {
             openAppWith(shared)
+            return
+        }
+
+        if (yt != null) {
+            // Nothing to choose for a single video: the default quality, or audio for music.
+            app.scope.launch {
+                val audio = YtDownloadWorker.defaultIsAudio(app, yt)
+                val key = YtDownloadWorker.keyFor(yt.videoId, audio)
+                if (app.settings.current.skipDuplicates && app.db.downloads().presentKeys(listOf(key)).isNotEmpty()) {
+                    DownloadNotifications.alreadySaved(app)
+                } else {
+                    YtDownloadWorker.enqueueDefault(app, yt)
+                    DownloadNotifications.started(app, 1)
+                }
+            }
+            finish()
             return
         }
 

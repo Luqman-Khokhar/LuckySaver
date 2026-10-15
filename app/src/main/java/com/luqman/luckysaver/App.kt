@@ -13,6 +13,8 @@ import com.luqman.luckysaver.resolve.IgSession
 import com.luqman.luckysaver.resolve.RateLimiter
 import com.luqman.luckysaver.resolve.RemoteConfig
 import com.luqman.luckysaver.resolve.ResolverChain
+import com.luqman.luckysaver.whatsapp.WaStatusStore
+import com.luqman.luckysaver.youtube.YtExtractor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -44,6 +46,8 @@ class App : Application() {
     val session: IgSession by lazy { IgSession(this) }
     val db: AppDatabase by lazy { AppDatabase.build(this) }
     val settings: SettingsStore by lazy { SettingsStore(this) }
+    val whatsapp: WaStatusStore by lazy { WaStatusStore(this) }
+    val youtube: YtExtractor by lazy { YtExtractor(http) }
 
     /** For work that has to outlive the screen that started it, such as a share with no UI. */
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)

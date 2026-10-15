@@ -8,6 +8,16 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Lets the bubble turn green over WhatsApp. Granted by the user in system settings. -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Package visibility: is WhatsApp installed, and can it be opened from the empty state. -->
+    <queries>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+    </queries>
 
     <application
         android:name=".App"
@@ -49,7 +59,8 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Draws a floating download button over other apps so a copied
-                    Instagram link can be saved without leaving the app it was copied in." />
+                    Instagram or YouTube link, or a WhatsApp status being watched, can be saved
+                    without leaving that app." />
         </service>
 
         <service

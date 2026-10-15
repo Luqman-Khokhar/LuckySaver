@@ -32,7 +32,9 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
@@ -84,6 +86,9 @@ fun ViewerScreen(
     avatars: Map<String, String?>,
     onDelete: (DownloadEntity) -> Unit,
     onClose: () -> Unit,
+    /** Set for WhatsApp statuses not yet copied: "Save" replaces "Delete", which isn't ours to do. */
+    onSave: ((DownloadEntity) -> Unit)? = null,
+    savedKeys: Set<String> = emptySet(),
 ) {
     if (items.isEmpty()) { LaunchedEffect(Unit) { onClose() }; return }
     val context = LocalContext.current
@@ -202,7 +207,8 @@ fun ViewerScreen(
                     Column(Modifier.weight(1f)) {
                         Text(current.owner, style = MaterialTheme.typography.titleSmall, color = Color.White)
                         Text(
-                            listOfNotNull(When.savedPhrase(context, current.savedAt), When.postedBefore(current.savedAt, current.takenAt))
+                            if (onSave != null) "Loaded ${When.stamp(context, current.savedAt)}"
+                            else listOfNotNull(When.savedPhrase(context, current.savedAt), When.postedBefore(current.savedAt, current.takenAt))
                                 .joinToString(" · "),
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.White.copy(alpha = 0.8f),
@@ -223,7 +229,9 @@ fun ViewerScreen(
             ) {
                 ViewerAction(Icons.Rounded.Share, "Share") { share(context, current) }
                 ViewerAction(Icons.AutoMirrored.Rounded.OpenInNew, "Open") { openExternally(context, current) }
-                ViewerAction(Icons.Rounded.Delete, "Delete") { paused = true; confirmDelete = current }
+                if (onSave == null) ViewerAction(Icons.Rounded.Delete, "Delete") { paused = true; confirmDelete = current }
+                else if (current.key in savedKeys) ViewerAction(Icons.Rounded.Check, "Saved", enabled = false) { }
+                else ViewerAction(Icons.Rounded.Download, "Save") { onSave(current) }
             }
         }
     }
@@ -273,9 +281,9 @@ private fun Segments(items: List<DownloadEntity>, page: Int, progress: Float) {
 }
 
 @Composable
-private fun ViewerAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+private fun ViewerAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, enabled: Boolean = true, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        IconButton(onClick = onClick) { Icon(icon, contentDescription = label, tint = Color.White) }
+        IconButton(onClick = onClick, enabled = enabled) { Icon(icon, contentDescription = label, tint = Color.White) }
         Text(label, style = MaterialTheme.typography.labelMedium, color = Color.White)
     }
 }

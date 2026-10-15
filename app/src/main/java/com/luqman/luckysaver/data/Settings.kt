@@ -23,7 +23,24 @@ data class Settings(
     val storyIntervalHours: Int = 4,
     val palette: Palette = Palette.JADE,
     val darkMode: DarkMode = DarkMode.SYSTEM,
+    /** Highest YouTube resolution saved without asking; the sheet can still pick another. */
+    val ytMaxHeight: Int = 1080,
+    /** YouTube Music links save audio only. */
+    val ytMusicAsAudio: Boolean = true,
 )
+
+/** Heights offered for YouTube. H.264 tops out at 1080p, so higher would never be honoured. */
+enum class YtQuality(val height: Int, val label: String) {
+    P1080(1080, "1080p"),
+    P720(720, "720p"),
+    P480(480, "480p"),
+    P360(360, "360p"),
+    ;
+
+    companion object {
+        fun of(height: Int) = entries.firstOrNull { it.height == height } ?: P1080
+    }
+}
 
 enum class Palette(val label: String) {
     JADE("LuckySaver jade"),
@@ -73,6 +90,8 @@ class SettingsStore(context: Context) {
             .getOrDefault(Palette.JADE),
         darkMode = runCatching { DarkMode.valueOf(prefs.getString(KEY_DARK, null) ?: "SYSTEM") }
             .getOrDefault(DarkMode.SYSTEM),
+        ytMaxHeight = prefs.getInt(KEY_YT_HEIGHT, 1080),
+        ytMusicAsAudio = prefs.getBoolean(KEY_YT_MUSIC_AUDIO, true),
     )
 
     fun update(block: (Settings) -> Settings) {
@@ -88,6 +107,8 @@ class SettingsStore(context: Context) {
             .putInt(KEY_WATCH_HOURS, next.storyIntervalHours)
             .putString(KEY_PALETTE, next.palette.name)
             .putString(KEY_DARK, next.darkMode.name)
+            .putInt(KEY_YT_HEIGHT, next.ytMaxHeight)
+            .putBoolean(KEY_YT_MUSIC_AUDIO, next.ytMusicAsAudio)
             .apply()
         _state.value = read()
     }
@@ -103,6 +124,8 @@ class SettingsStore(context: Context) {
         private const val KEY_WATCH_HOURS = "story_watch_hours"
         private const val KEY_PALETTE = "palette"
         private const val KEY_DARK = "dark_mode"
+        private const val KEY_YT_HEIGHT = "yt_max_height"
+        private const val KEY_YT_MUSIC_AUDIO = "yt_music_audio"
 
         /** MediaStore rejects path separators and leading dots in a relative path segment. */
         fun sanitizeFolder(raw: String): String =

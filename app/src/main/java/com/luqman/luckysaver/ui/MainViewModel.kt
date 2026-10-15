@@ -7,6 +7,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.luqman.luckysaver.App
 import com.luqman.luckysaver.core.IgLinkParser
+import com.luqman.luckysaver.core.YtLinkParser
 import com.luqman.luckysaver.core.MediaItem
 import com.luqman.luckysaver.core.ResolveException
 import com.luqman.luckysaver.data.Settings
@@ -73,6 +74,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    private val _ytHandoff = MutableStateFlow<String?>(null)
+    /** A YouTube link that arrived here (share, clipboard, Instagram sheet) for the YouTube sheet. */
+    val ytHandoff: StateFlow<String?> = _ytHandoff.asStateFlow()
+
+    fun consumeYtHandoff() { _ytHandoff.value = null }
+
+    /** Sends YouTube links to the YouTube sheet; true when it did. */
+    private fun handOffYouTube(text: String): Boolean {
+        if (YtLinkParser.parse(text) == null) return false
+        _sheetOpen.value = false
+        _input.value = ""
+        _state.value = ResolveState.Idle
+        _ytHandoff.value = text.trim()
+        return true
+    }
+
     private val _sheetOpen = MutableStateFlow(false)
     /** The download sheet over Saved; it replaces the old home screen. */
     val sheetOpen: StateFlow<Boolean> = _sheetOpen.asStateFlow()
@@ -99,6 +116,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun onInput(text: String) {
         val pasted = text.length - _input.value.length >= PASTE_MIN_CHARS
+        if (pasted && handOffYouTube(text)) return
         _input.value = text
         if (pasted && IgLinkParser.parse(text.trim()) != null) resolve()
         else if (_state.value is ResolveState.Error) _state.value = ResolveState.Idle
@@ -128,7 +146,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val link = text?.trim().orEmpty()
         _clipboardLink.value = when {
             link.isEmpty() -> null
-            IgLinkParser.parse(link) == null -> null
+            IgLinkParser.parse(link) == null && YtLinkParser.parse(link) == null -> null
             link == _input.value.trim() -> null
             link == dismissedLink -> null
             else -> link
@@ -144,6 +162,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val link = _clipboardLink.value ?: return
         dismissedLink = link
         _clipboardLink.value = null
+        if (handOffYouTube(link)) return
         _sheetOpen.value = true
         _input.value = link
         resolve()
@@ -182,6 +201,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Called for ACTION_SEND shares: fill the box and resolve immediately. */
     fun onShared(text: String) {
+        if (handOffYouTube(text)) return
         _sheetOpen.value = true
         _input.value = text
         resolve()

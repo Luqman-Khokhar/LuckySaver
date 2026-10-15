@@ -1,4 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="window">#F7F8F6</color>
+    <!-- Floating button and its panels: drawn over other apps, so dark whatever the app theme. -->
+    <color name="overlay_surface">#F21B1F24</color>
+    <color name="overlay_on_surface">#FFF2F4F6</color>
+    <color name="overlay_on_surface_muted">#B3F2F4F6</color>
+    <color name="overlay_tile">#FF2A3036</color>
+    <!-- WhatsApp mode: the bubble takes WhatsApp's green so the mode reads at a glance. -->
+    <color name="whatsapp_green">#FF25D366</color>
+    <color name="on_whatsapp_green">#FF06281A</color>
+    <!-- YouTube mode: the bubble takes YouTube's red, white glyph on top (4:1, enough for an icon). -->
+    <color name="youtube_red">#FFFF0000</color>
+    <color name="on_youtube_red">#FFFFFFFF</color>
 </resources>

@@ -75,6 +75,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("io.coil-kt.coil3:coil-compose:3.2.0")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.2.0")
+    // YouTube stream extraction: signature/n-param deciphering moves too often to maintain by hand.
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

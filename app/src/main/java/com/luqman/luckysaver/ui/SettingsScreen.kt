@@ -44,6 +44,7 @@ import com.luqman.luckysaver.data.Palette
 import com.luqman.luckysaver.data.Quality
 import com.luqman.luckysaver.data.Settings
 import com.luqman.luckysaver.data.WatchInterval
+import com.luqman.luckysaver.data.YtQuality
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,11 +52,13 @@ fun SettingsScreen(
     settings: Settings,
     loggedIn: Boolean,
     bubbleOn: Boolean,
+    usageAccess: Boolean,
     batteryRestricted: Boolean,
     onChange: ((Settings) -> Settings) -> Unit,
     onWatching: (Boolean) -> Unit,
     onInterval: (Int) -> Unit,
     onBubble: (Boolean) -> Unit,
+    onUsageAccess: () -> Unit,
     onFixBattery: () -> Unit,
     onLogin: () -> Unit,
     onLogout: () -> Unit,
@@ -156,12 +159,46 @@ fun SettingsScreen(
                 }
             }
 
+            item { Section("YouTube") }
+            item {
+                Choice(
+                    title = "Video quality",
+                    options = YtQuality.entries,
+                    selected = YtQuality.of(settings.ytMaxHeight),
+                    label = { it.label },
+                    note = "Highest quality saved from a share or the bubble. Lower when YouTube has nothing this high. " +
+                        "Paste a link to pick per video.",
+                ) { q -> onChange { it.copy(ytMaxHeight = q.height) } }
+            }
+            item {
+                SwitchRow(
+                    "Music links save audio",
+                    "YouTube Music links save the song as an M4A in Music/, not the video.",
+                    settings.ytMusicAsAudio,
+                ) { on -> onChange { it.copy(ytMusicAsAudio = on) } }
+            }
+
             item { Section("Floating button") }
             item {
                 SwitchRow(
                     "Show over other apps",
-                    "Copy a link in Instagram, then tap the bubble to save it without switching apps.",
+                    "Copy a link in Instagram or YouTube, then tap the bubble to save it without switching apps.",
                     bubbleOn, onBubble,
+                )
+            }
+            item {
+                ListItem(
+                    headlineContent = { Text("Switch modes by app") },
+                    supportingContent = {
+                        Text(
+                            if (usageAccess) "On. The bubble turns green over WhatsApp, red over YouTube and back over Instagram. " +
+                                "Long-press it to switch by hand."
+                            else "Needs usage access, so the bubble can see which app is open. " +
+                                "Without it, long-press the bubble to switch modes."
+                        )
+                    },
+                    trailingContent = { TextButton(onClick = onUsageAccess) { Text(if (usageAccess) "Manage" else "Allow") } },
+                    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
                 )
             }
 

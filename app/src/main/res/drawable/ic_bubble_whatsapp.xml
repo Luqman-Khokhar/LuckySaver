@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WhatsApp mode: a status ring in four segments around a download arrow, dark on green. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="@color/whatsapp_green" android:pathData="M12,0A12,12 0,1 1,12,24A12,12 0,1 1,12,0Z" />
+    <path
+        android:strokeColor="@color/on_whatsapp_green"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M6.55,4.22A9.5,9.5 0,0 1,17.45 4.22M19.78,6.55A9.5,9.5 0,0 1,19.78 17.45M17.45,19.78A9.5,9.5 0,0 1,6.55 19.78M4.22,17.45A9.5,9.5 0,0 1,4.22 6.55" />
+    <path android:fillColor="@color/on_whatsapp_green" android:pathData="M11,7.5h2v5.6l2.1,-2.1 1.4,1.4L12,16.9 7.5,12.4l1.4,-1.4L11,13.1z" />
+</vector>

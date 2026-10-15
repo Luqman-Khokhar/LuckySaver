@@ -11,7 +11,7 @@ import java.io.OutputStream
 /** Scoped-storage writer: no storage permission needed on API 29+. */
 class MediaStoreSaver(private val context: Context) {
 
-    fun create(fileName: String, mime: String, isVideo: Boolean, takenAtMillis: Long): Uri {
+    fun create(fileName: String, mime: String, isVideo: Boolean, takenAtMillis: Long, subfolder: String? = null): Uri {
         val collection = if (isVideo)
             MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         else MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -24,13 +24,41 @@ class MediaStoreSaver(private val context: Context) {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
             put(MediaStore.MediaColumns.MIME_TYPE, mime)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "$dir/$folder")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, if (subfolder == null) "$dir/$folder" else "$dir/$folder/$subfolder")
             put(MediaStore.MediaColumns.DATE_TAKEN, takenAtMillis)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
         return context.contentResolver.insert(collection, values)
             ?: error("MediaStore insert failed for $fileName")
     }
+
+    /**
+     * YouTube files go where players look for them: videos under Movies/, audio under Music/,
+     * each in an album named like the photo one.
+     */
+    fun createYouTube(fileName: String, audio: Boolean, takenAtMillis: Long, title: String, artist: String): Uri {
+        val collection = if (audio)
+            MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        else MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val folder = SettingsStore.sanitizeFolder(
+            (context.applicationContext as? com.luqman.luckysaver.App)?.settings?.current?.folder ?: FOLDER
+        )
+        val dir = if (audio) Environment.DIRECTORY_MUSIC else Environment.DIRECTORY_MOVIES
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, if (audio) "audio/mp4" else "video/mp4")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "$dir/$folder")
+            put(MediaStore.MediaColumns.DATE_TAKEN, takenAtMillis)
+            put(MediaStore.MediaColumns.TITLE, title)
+            if (audio) put(MediaStore.Audio.AudioColumns.ARTIST, artist)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        return context.contentResolver.insert(collection, values)
+            ?: error("MediaStore insert failed for $fileName")
+    }
+
+    fun openFd(uri: Uri): android.os.ParcelFileDescriptor =
+        context.contentResolver.openFileDescriptor(uri, "rw") ?: error("Cannot open $uri")
 
     fun open(uri: Uri): OutputStream =
         context.contentResolver.openOutputStream(uri, "w") ?: error("Cannot open $uri")

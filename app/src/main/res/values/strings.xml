@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="bubble_description">Download the copied Instagram link</string>
+    <string name="bubble_description_whatsapp">Save a WhatsApp status</string>
+    <string name="bubble_description_youtube">Download the copied YouTube link</string>
 </resources>

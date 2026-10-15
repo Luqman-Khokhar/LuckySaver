@@ -109,9 +109,14 @@ private val JadeDark = darkColorScheme(
 data class Accents(
     /** "New since you last looked": story rings and dots. Never used for anything else. */
     val fresh: Color,
+    /** YouTube's red, for YouTube's own actions only, so the tab reads as YouTube at a glance. */
+    val youtube: Color = Color(0xFFCC0000),
+    /** Text and icons on [youtube]: white clears 4.5:1 on this red. */
+    val onYoutube: Color = Color(0xFFFFFFFF),
 )
 
 private val LightAccents = Accents(fresh = Color(0xFFE8A33D))
+// The dark red is kept in dark mode too: it still clears 3:1 against the dark surface.
 private val DarkAccents = Accents(fresh = Color(0xFFF2B85B))
 
 val LocalAccents = staticCompositionLocalOf { LightAccents }

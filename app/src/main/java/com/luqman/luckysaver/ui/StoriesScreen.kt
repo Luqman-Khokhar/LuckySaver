@@ -82,6 +82,9 @@ fun StoriesScreen(
     onPause: (WatchedAccount, Boolean) -> Unit,
     onRemove: (WatchedAccount) -> Unit,
     onOpen: (DownloadEntity, List<DownloadEntity>) -> Unit,
+    title: String = "Stories",
+    /** Platform sub-tabs drawn under the app bar. */
+    subTabs: @Composable () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
@@ -92,8 +95,9 @@ fun StoriesScreen(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
+          Column {
             TopAppBar(
-                title = { Text("Stories") },
+                title = { Text(title) },
                 actions = {
                     val canCheck = status is WatchStatus.Running || status is WatchStatus.Off
                     TooltipBox(
@@ -124,6 +128,8 @@ fun StoriesScreen(
                 },
                 scrollBehavior = scroll,
             )
+            subTabs()
+          }
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->

@@ -70,11 +70,11 @@ object DownloadNotifications {
         )
     }
 
-    fun saved(context: Context, id: Int, fileName: String, uri: Uri, isVideo: Boolean) {
+    fun saved(context: Context, id: Int, fileName: String, uri: Uri, isVideo: Boolean, mime: String? = null) {
         val open = PendingIntent.getActivity(
             context, id,
             Intent(Intent.ACTION_VIEW)
-                .setDataAndType(uri, if (isVideo) "video/*" else "image/*")
+                .setDataAndType(uri, mime ?: if (isVideo) "video/*" else "image/*")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE,
         )

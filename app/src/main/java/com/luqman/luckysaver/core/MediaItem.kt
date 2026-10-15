@@ -50,6 +50,10 @@ enum class FailureKind {
     NETWORK,
     UNREADABLE,
     UNSUPPORTED_LINK,
+    /** YouTube: age-gated, members-only, paid, private or blocked in this country. */
+    RESTRICTED,
+    /** YouTube wants a "not a bot" check from this connection; nothing to do but wait or switch network. */
+    BOT_CHECK,
     UNKNOWN,
 }
 

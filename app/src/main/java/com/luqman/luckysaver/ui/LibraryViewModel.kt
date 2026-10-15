@@ -12,6 +12,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.luqman.luckysaver.App
 import com.luqman.luckysaver.data.DownloadEntity
+import com.luqman.luckysaver.data.Source
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -42,7 +43,14 @@ data class LibraryState(
 )
 
 /** Which "new" marker a screen clears when it is opened. */
-enum class SeenArea { SAVED, STORIES }
+enum class SeenArea { SAVED, STORIES, YOUTUBE }
+
+/** YouTube sub-tabs. Audio sits in Music whatever kind of link it came from. */
+enum class YtShelf(val label: String, val source: Int) {
+    VIDEOS("Videos", Source.YT_VIDEO),
+    SHORTS("Shorts", Source.YT_SHORT),
+    MUSIC("Music", Source.YT_AUDIO),
+}
 
 /** A delete Android must confirm with the user, for files this install doesn't own. */
 data class DeleteRequest(val sender: IntentSender, val keys: List<String>)
@@ -78,6 +86,13 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     val stories: StateFlow<List<AccountSection>?> =
         app.db.downloads().observeWatchlist()
             .map { list -> list.groupBy { it.owner.lowercase() }.values.map { AccountSection(it.first().owner, it) } }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Every YouTube save by shelf, grouped by day; null until the database answers. */
+    val youtube: StateFlow<Map<YtShelf, List<DaySection>>?> =
+        app.db.downloads().observeYouTube()
+            .map { all -> YtShelf.entries.associateWith { shelf -> group(all.filter { it.source == shelf.source }) } }
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 

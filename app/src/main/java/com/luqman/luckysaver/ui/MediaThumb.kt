@@ -2,6 +2,8 @@ package com.luqman.luckysaver.ui
 
 import android.content.ContentResolver
 import android.graphics.Bitmap
+import android.graphics.ImageDecoder
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.MediaStore
 import android.util.LruCache
@@ -50,6 +52,7 @@ object Thumbs {
         if (isMissing(uri)) return null
         return withContext(Dispatchers.IO) {
             runCatching { resolver.loadThumbnail(Uri.parse(uri), Size(px, px), null) }
+                .recoverCatching { if (isDocument(uri)) documentThumbnail(resolver, uri, px) else throw it }
                 .onFailure { synchronized(missing) { missing += uri } }
                 .getOrNull()
                 ?.also { bitmaps.put("$uri@$px", it) }
@@ -60,12 +63,52 @@ object Thumbs {
     suspend fun duration(resolver: ContentResolver, uri: String): Long? {
         durations.get(uri)?.let { return it }
         return withContext(Dispatchers.IO) {
+            if (isDocument(uri)) return@withContext documentDuration(resolver, uri)?.also { durations.put(uri, it) }
             runCatching {
                 resolver.query(Uri.parse(uri), arrayOf(MediaStore.Video.VideoColumns.DURATION), null, null, null)
                     ?.use { c -> if (c.moveToFirst()) c.getLong(0) else null }
             }.getOrNull()?.also { durations.put(uri, it) }
         }
     }
+
+    /**
+     * WhatsApp's status folder holds a `.nomedia` file, so Android never indexes it and has no
+     * thumbnail to hand back. Those files are decoded here instead, small and once.
+     */
+    private fun isDocument(uri: String) = uri.startsWith("content://com.android.externalstorage.documents/")
+
+    private fun documentThumbnail(resolver: ContentResolver, uri: String, px: Int): Bitmap {
+        val type = resolver.getType(Uri.parse(uri)).orEmpty()
+        if (type.startsWith("video/")) {
+            val retriever = MediaMetadataRetriever()
+            try {
+                resolver.openFileDescriptor(Uri.parse(uri), "r")!!.use { fd ->
+                    retriever.setDataSource(fd.fileDescriptor)
+                    return retriever.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, px, px)
+                        ?: error("No frame in $uri")
+                }
+            } finally {
+                retriever.release()
+            }
+        }
+        val source = ImageDecoder.createSource(resolver, Uri.parse(uri))
+        return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+            val scale = px / minOf(info.size.width, info.size.height).toFloat()
+            if (scale < 1f) decoder.setTargetSize((info.size.width * scale).toInt().coerceAtLeast(1), (info.size.height * scale).toInt().coerceAtLeast(1))
+        }
+    }
+
+    private fun documentDuration(resolver: ContentResolver, uri: String): Long? = runCatching {
+        val retriever = MediaMetadataRetriever()
+        try {
+            resolver.openFileDescriptor(Uri.parse(uri), "r")!!.use { fd ->
+                retriever.setDataSource(fd.fileDescriptor)
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+            }
+        } finally {
+            retriever.release()
+        }
+    }.getOrNull()
 
     fun isMissing(uri: String): Boolean = synchronized(missing) { uri in missing }
 

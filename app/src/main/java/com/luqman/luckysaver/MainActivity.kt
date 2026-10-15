@@ -33,6 +33,9 @@ import com.luqman.luckysaver.ui.LoginScreen
 import com.luqman.luckysaver.ui.LuckyTheme
 import com.luqman.luckysaver.ui.MainViewModel
 import com.luqman.luckysaver.ui.StoriesViewModel
+import com.luqman.luckysaver.ui.WhatsAppViewModel
+import com.luqman.luckysaver.ui.YouTubeViewModel
+import com.luqman.luckysaver.core.WaApp
 import com.luqman.luckysaver.ui.WelcomeScreen
 import com.luqman.luckysaver.ui.isAppInDarkTheme
 
@@ -42,6 +45,8 @@ class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
     private val library: LibraryViewModel by viewModels()
     private val stories: StoriesViewModel by viewModels()
+    private val whatsapp: WhatsAppViewModel by viewModels()
+    private val youtube: YouTubeViewModel by viewModels()
     private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,6 +104,8 @@ class MainActivity : ComponentActivity() {
                                 main = vm,
                                 library = library,
                                 stories = stories,
+                                whatsapp = whatsapp,
+                                youtube = youtube,
                                 batteryRestricted = !isIgnoringBatteryOptimizations(),
                                 onLogin = { screen = Screen.LOGIN },
                                 onBubble = { on ->
@@ -120,6 +127,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         vm.refreshLogin()
+        whatsapp.refreshAccess()
         // Reading the clipboard is only allowed while focused, which is exactly now.
         val clip = getSystemService(ClipboardManager::class.java)
         vm.onClipboard(
@@ -152,11 +160,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleShare(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_OPEN_WHATSAPP, false) == true) {
+            whatsapp.requestOpen(intent.getStringExtra(EXTRA_WA_APP)?.let { runCatching { WaApp.valueOf(it) }.getOrNull() })
+            return
+        }
         val text = when (intent?.action) {
             Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
             Intent.ACTION_VIEW -> intent.dataString
             else -> null
         }
         if (!text.isNullOrBlank()) vm.onShared(text)
+    }
+
+    companion object {
+        private const val EXTRA_OPEN_WHATSAPP = "open_whatsapp"
+        private const val EXTRA_WA_APP = "wa_app"
+
+        /** From the bubble: open on the WhatsApp tab, at the app the user was in. */
+        fun whatsAppIntent(context: android.content.Context, app: WaApp?): Intent =
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(EXTRA_OPEN_WHATSAPP, true)
+                .putExtra(EXTRA_WA_APP, app?.name)
     }
 }
